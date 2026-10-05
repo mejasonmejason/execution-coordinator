@@ -40,3 +40,4 @@ Run the suite before and after every change. A rule that a script can enforce ge
 | v5 | 20% shorter; one home per rule; contradictions fixed. |
 | v6 | Scale process to risk, merge-queue bisection, idempotent writes, milestones, canaries. Plus the REST fallback for cloud sessions and archiving of finished executor sessions. |
 | v7 | 12% shorter with the same rules. Plans and reports use the fewest plain steps the risk needs, with one worked example. In head-to-head tests this cut average answer length from about 165 words to 158. |
+| v8 | Credentials stay with the owner, who is asked directly; decision issues only for real choices. Seven rules from the internal version: sweep after compaction, drift checks on long-running writers, 10-minute checkpoints, mobile widths, checking discovery before trusting zero, one heavy local job at a time, stack pushes through the stack tool. |

@@ -91,9 +91,9 @@ Record ledger grants at kickoff; confirm missing grants once, never reconfirm gr
 - PR work: comments, REST replies (§9), review requests, labels, verified fixes/pushes and sensitive-change rulings (§5a rule 6); thread resolution per §5a rule 5.
 - **Standing merge authority:** once granted, merge each in-scope PR meeting MERGE (§6). Never self-approve or admin-bypass branch protection or required reviews.
 
-Human-only: chat/email to people (draft, name target, await approval); approving PRs for others; destructive operations on unowned branches; shared-branch force pushes; production changes needing personal credentials/MFA; SSO sign-in; explicit ledger holds. No other gates; silence clears none. Report missing capabilities exactly; continue independent work.
+Human-only: chat/email to people (draft, name target, await approval); approving PRs for others; destructive operations on unowned branches; shared-branch force pushes; production changes needing personal credentials/MFA; SSO sign-in; explicit ledger holds. No other gates; silence clears none. Report missing capabilities exactly; continue independent work. The owner runs credentialed steps; never ask for, hold or pass on a credential. Ask the owner directly; drafts awaiting approval are only for messages to other people.
 
-**Human decisions:** one GitHub issue each, labelled `decision`: options, recommendation, cost if wrong. Link from ledger/`human-gate`; close with named person's answer.
+**Human decisions** (only real choices between options): one GitHub issue each, labelled `decision`: options, recommendation, cost if wrong. Link from ledger/`human-gate`; close with named person's answer.
 
 Read repo rules (CLAUDE.md, AGENTS.md, steward/babysit skill) at kickoff; they win on conventions and who merges. Record narrower merge rules as rulings.
 
@@ -127,6 +127,7 @@ Sequential execution is a defect when tasks are independent.
 6. **Serialize merges:** queue or one at a time (§6). Failed batch checks: isolate culprit via queue bisection/subset runs; requeue passing PRs, retest on new base. Record queue priority for incident/security/unblocker PRs; checks never change.
 7. Read ledger, progress notes and git log each iteration; end with commit/progress line. Save plan before context fills.
 8. Delegate feature code; coordination/small fixes: §3a, §4.
+Use a read-only scout or advisor to check long-running writers for drift from the brief.
 9. **AGENTS.md/CLAUDE.md:** scoped repo/package rules with exact test commands, protected paths and links, not pasted docs.
 10. **After two failed attempts** at a check/thread/error, change executor, upgrade tier/change model family or use a diagnostic scout. Escalate only if that fails or blocker is human-only (§2). Never retry unchanged; hand over exact failure, attempts and ruled-out hypotheses, not transcripts.
 11. **Denial is not unavailability.** Never bypass an explicit tool/hook/permission denial via another tool, API or launch path. Fix its cause or record the gate.
@@ -138,6 +139,7 @@ Sequential execution is a defect when tasks are independent.
 ## 4. Inventory
 
 Discover the PR portfolio at start and every sweep:
+Test discovery against new PR classes before trusting zero results.
 
 ```bash
 # Your PRs and roster authors (repeated author: qualifiers are ORed), plus bot-authored PRs assigned to you
@@ -242,6 +244,7 @@ Reviewers target repo, without write tools. Verify citations at reviewed head wi
 Host heavy tooling (repo-wide lint/codegen/full tests/large builds), pushed branch/PR/issue/brief inputs, more than two heavy local jobs, failed memory checks or work surviving machine downtime. Record placement on task/ledger.
 
 Keep work local when it needs uncommitted state, local-only credentials or services, local browser journeys, or quick coordination actions.
+Run only one heavy local job at a time; route additional heavy work to hosted execution.
 
 Memory check before heavy local work and each sweep while it runs:
 
@@ -261,7 +264,7 @@ Hosted briefs (§7): repo URL, branch/PR, pasted contents (not local paths), led
 
 On PR review/check/merge/close, child/hosted completion/failure, backlog changes or user messages: reconcile remote state, route (§4), update task/ledger, report material changes (§9). **No sleep-polling:** end turn; resume on events.
 
-**Sweep** at least every 15 minutes while work is active and after any resume:
+**Sweep** at least every 15 minutes while work is active, and immediately after any resume or compaction:
 
 1. Rediscover PRs (§4) and backlog; pick up new, drop merged or closed.
 2. Reconcile owners; reassign anything whose owner is gone.
@@ -351,6 +354,7 @@ A replacement takes the same name plus ` v2`, ` v3`; the highest version is live
 Report immediately after any push, agent failure, conflict, CI failure, resolved blocker, READY/MERGE, merge, deploy change, new blocking task or required user action. Tools/internal messages/ledger edits are not visible updates. Every sweep while executors run shows all owners (tower, sessions, children, hosted runs, bots), including idle/errored/completed-but-open, marked local/hosted; include heavy-work memory results.
 
 **Links:** user updates descriptively link PRs, specific threads/comments, checks/runs, tasks, docs, deploys, hosted runs and sessions. Use actual tool/record URLs; never guess. Missing URL: `link unavailable` plus identifier. Local paths aren't web links.
+During long commands, executors checkpoint to their task at least every 10 min. Name unchanged owners' running operation in status updates.
 
 **Audit comments** before PR reports/READY/handoffs/answered claims: `scripts/pr-threads.sh <pr-url> [...]`, not memory. ACTION: fix/evidence reply/named human question; AWAITING: unresolved, not done; UNSENT: invisible PENDING review, publish/delete. Exits: 1 actionable; 3 unreadable, never zero. User-linked comments: answer, re-audit, handle other ACTION rows this turn. Report linked counts: `N need a response, M awaiting reviewer, K unsent`.
 
@@ -378,7 +382,7 @@ Record task/ledger rulings: choice, reason, cost if wrong. Within §2 authority,
 
 ## 10. Stack invariants
 
-After parent pushes: fetch canonical remotes, pause child pushes, restack with repo tool, `--force-with-lease` only owned branches, verify remote parent ancestry and each PR's base/mergeability, rerun current-head CI. Propagate lower-layer fixes upstack this round; reply with SHA/PRs. Local ancestry cannot prove stack health.
+After parent pushes: fetch canonical remotes, pause child pushes, restack and push with the repo's stack tool; `--force-with-lease` only on owned branches, never a manual force push. Verify remote parent ancestry and each PR's base/mergeability, rerun current-head CI. Propagate lower-layer fixes upstack this round; reply with SHA/PRs. Local ancestry cannot prove stack health.
 
 After a downstack merge, prune merged entries from the stack. Where the repo requires signed commits, verify every rebased descendant is still signed before pushing.
 
@@ -387,6 +391,7 @@ After a downstack merge, prune merged entries from the stack. Where the repo req
 For web work, run real browser/Playwright journeys. Label mocks; they never replace required real sign-in.
 
 **UI:** task scenarios from diff; executor owner/advisor reviews, no new user gate. Drive real branch; SSO: named sign-in `human-gate`, never expose credentials. Capture screenshots, console errors, failed requests; screenshots alone do not prove success. Link each scenario's pass/fail evidence; turn reusable flows into tests.
+Test mobile widths for visual changes.
 
 **Deployment:** build exact remote commit; deploy changed services in dependency order; verify rollouts/logs, deployed journeys and reload persistence. With canaries, compare stable control; promote only passing signals. Failed canary: configured rollback, then re-verify. Post-merge/deploy failure: record commit range, isolate culprit, create owned fix task. Pace/inspect videos, attach to PR, mark superseded ones stale; state what they prove. Demo-only data/omitted dependencies cannot prove real paths. Task validation gaps.
 
