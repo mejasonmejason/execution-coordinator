@@ -1,0 +1,61 @@
+name: skill
+
+# Every PR: run the tests and the upload checks.
+# Every push to main: do the same, then build execution-coordinator.zip
+# and publish it as a GitHub Release. Upload that zip on claude.ai.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test suite
+        run: bash tests/run.sh
+
+      - name: Upload rules
+        run: python3 .github/scripts/check-skill.py
+
+      - name: No "-public" name left
+        run: |
+          if grep -rn --exclude-dir=.git --exclude-dir=.github -e 'execution-coordinator-public' -e 'Execution Coordinator (public)' .; then
+            echo "Found a -public name"; exit 1
+          fi
+
+  release:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build zip
+        id: zip
+        run: |
+          mkdir -p build
+          git archive --format=tar --prefix=execution-coordinator/ HEAD | tar -x -C build
+          rm -rf build/execution-coordinator/.github
+          chmod +x build/execution-coordinator/scripts/*.sh build/execution-coordinator/hooks/*.sh build/execution-coordinator/tests/run.sh
+          (cd build && zip -q -9 -r -D -X ../execution-coordinator.zip execution-coordinator)
+          python3 -c "import zipfile; z = zipfile.ZipFile('execution-coordinator.zip'); assert z.testzip() is None; print(len(z.namelist()), 'files')"
+          echo "sha=$(sha256sum execution-coordinator.zip | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "tag=v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.zip.outputs.tag }}" execution-coordinator.zip \
+            --title "${{ steps.zip.outputs.tag }}" \
+            --notes "Upload execution-coordinator.zip on the claude.ai Skills page in place of the current skill.
+
+          sha256: ${{ steps.zip.outputs.sha }}
+          commit: ${GITHUB_SHA}"

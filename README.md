@@ -15,11 +15,19 @@ A Claude skill that acts as a control tower for multi-PR engineering work. It pl
 | `tests/run.sh` | Offline test suite. `gh` is replaced by a stub, so nothing touches GitHub. |
 | `agents/openai.yaml` | Metadata for Codex. |
 
-## Install
+## Release and install
 
-- **claude.ai:** zip the repository folder as `execution-coordinator/` and upload it on the Skills page.
+Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and the upload checks, builds `execution-coordinator.zip`, and publishes it as a GitHub Release with its sha256.
+
+- **claude.ai:** download `execution-coordinator.zip` from the [latest release](../../releases/latest) and upload it on the Skills page in place of the current skill. claude.ai has no API for account skills, so this step stays manual.
 - **Claude Code:** copy the folder into `~/.claude/skills/` or into a repository's `.claude/skills/`.
 - **Hooks (optional):** add the two hooks to `.claude/settings.json`. `SKILL.md` section 8a has the entry.
+
+## Change
+
+1. Open a PR. The workflow runs the tests and the upload checks on it.
+2. Merge the PR. The workflow publishes a new release.
+3. Upload the release zip on claude.ai.
 
 ## Test
 
