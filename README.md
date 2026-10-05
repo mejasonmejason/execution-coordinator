@@ -39,3 +39,4 @@ Run the suite before and after every change. A rule that a script can enforce ge
 | v4 | Risk floor from changed paths, read-only reviewers, flake versus caused, task buckets. |
 | v5 | 20% shorter; one home per rule; contradictions fixed. |
 | v6 | Scale process to risk, merge-queue bisection, idempotent writes, milestones, canaries. Plus the REST fallback for cloud sessions and archiving of finished executor sessions. |
+| v7 | 12% shorter with the same rules. Plans and reports use the fewest plain steps the risk needs, with one worked example. In head-to-head tests this cut average answer length from about 165 words to 158. |
