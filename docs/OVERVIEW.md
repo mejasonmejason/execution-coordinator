@@ -1,6 +1,6 @@
 # Visual overview
 
-These diagrams show what the skill does. GitHub draws them from the Mermaid source below. `SKILL.md` stays the source of truth; the section numbers in the labels (§6, §8a) point to it.
+These diagrams show what the skill does. GitHub draws them from the Mermaid source below. `SKILL.md` and `references/` stay the source of truth; the labels use their heading names.
 
 1. [What is in the skill](#1-what-is-in-the-skill)
 2. [The four operating layers](#2-the-four-operating-layers)
@@ -17,14 +17,16 @@ These diagrams show what the skill does. GitHub draws them from the Mermaid sour
 
 ```mermaid
 flowchart LR
-  subgraph Rules["SKILL.md: the rules"]
-    R1["§1 ledger and backlog"]
-    R2["§3 fence, plan, fan-out"]
-    R3["§6 READY and MERGE"]
-    R4["§7 dispatch and acceptance"]
-    R5["§8 events and sweep"]
-    R6["§9 status and replies"]
+  subgraph Rules["SKILL.md: the core loop"]
+    R1["ledger and backlog"]
+    R2["fence, plan, fan-out"]
+    R3["READY and MERGE"]
+    R4["dispatch and acceptance"]
+    R5["events and sweep"]
+    R6["status and replies"]
   end
+  Refs["references/*.md<br/>detail read only when needed:<br/>cloud and Codex, keep-alive,<br/>PR inventory and feedback,<br/>delegation and validation,<br/>merging, lessons"]
+  Rules -. "read when" .-> Refs
   subgraph Scripts["scripts/: checks a program can run"]
     S1["status.sh<br/>status, busy lease, dispatches"]
     S2["ready.sh<br/>READY check for one PR head"]
@@ -52,7 +54,7 @@ flowchart LR
 
 ## 2. The four operating layers
 
-Each layer covers a time when the layer above it cannot act (§0).
+Each layer covers a time when the layer above it cannot act (see the layer table in `references/keepalive.md`).
 
 ```mermaid
 flowchart TB
@@ -72,16 +74,16 @@ The coordinator plans, sends independent tasks to executors in parallel, checks 
 
 ```mermaid
 flowchart TD
-  A["Objective"] --> B["§3 Completion fence<br/>observable criteria"]
+  A["Objective"] --> B["Completion fence<br/>observable criteria"]
   B --> C["Dependency graph<br/>independent vs shared files"]
   C --> D{"Independent?"}
-  D -- "yes" --> E["§3a Fan out<br/>one executor, one worktree,<br/>one branch per task"]
+  D -- "yes" --> E["Fan out<br/>one executor, one worktree,<br/>one branch per task"]
   D -- "no, shared files" --> F["One writer,<br/>stack order"]
   E --> G["status.sh dispatch KEY<br/>records base_sha, paths, branch"]
   F --> G
   G --> H["Executor works,<br/>opens PR, reports done"]
   H --> I["dispatch --state awaiting-acceptance"]
-  I --> J["§7 Acceptance"]
+  I --> J["Acceptance"]
   J --> J1["ready.sh --key KEY --sha HEAD"]
   J --> J2["Coordinator re-runs<br/>validation commands"]
   J --> J3["Fresh-context reviewer<br/>path:line per criterion"]
@@ -89,9 +91,9 @@ flowchart TD
   K -- "no" --> L["dispatch --state rejected<br/>exact findings back to executor"]
   L --> H
   K -- "yes" --> M["dispatch --state accepted"]
-  M --> N["§6 MERGE<br/>re-fetch, merge gate, repo merge path"]
-  N --> O["§11 Verify deploy<br/>runtime signals, real journeys"]
-  O --> P["§13 Close the loop<br/>archive executor, close tasks"]
+  M --> N["MERGE<br/>re-fetch, merge gate, repo merge path"]
+  N --> O["Verify deploy<br/>runtime signals, real journeys"]
+  O --> P["Close the loop<br/>archive executor, close tasks"]
 ```
 
 ## 4. Dispatch records

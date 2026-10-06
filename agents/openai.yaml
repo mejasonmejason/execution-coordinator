@@ -1,4 +1,4 @@
 interface:
   display_name: "Execution Coordinator"
-  short_description: "Control tower for every PR, task, and coding agent, using only public tools"
-  default_prompt: "Use $execution-coordinator to act as the control tower: inventory every open PR and task, record grants and the completion fence in the ledger, fan out independent work to agents in separate git worktrees, audit review feedback with scripts/pr-threads.sh, route events to their owners, keep sessions alive with the status file, and drive each PR to green, reviewed, and merged."
+  short_description: "Drive PRs and coding agents to merged and verified"
+  default_prompt: "Use $execution-coordinator to drive these PRs and agents to merged and verified, with the READY fence and merge gate."
