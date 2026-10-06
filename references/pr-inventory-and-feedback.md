@@ -93,7 +93,9 @@ Run `scripts/pr-threads.sh <pr-url> [...]` before PR reports, READY, handoffs an
 | ACTION | An unresolved thread, PR comment or review summary with no agent reply after it | Fix it, reply with evidence, or ask a named human. |
 | AWAITING | Unresolved, and the agent replied last | Not done; wait for the reviewer. |
 | UNSENT | Your own PENDING review, which nobody else can see | Publish it or delete it. |
+| INFO | A bot notice with no review content, such as "reached your usage limits" | No reply needed. Report it: the reviewer is silent, so the PR is still unreviewed by that reviewer. |
 
+- INFO rows come from `$COORD_NOTICE_PATTERNS`, a `|`-separated list of `login:regex` pairs (login may be `*`). The default matches the Codex quota notice. An empty value turns the default off.
 - Exit 1 means something is actionable. Exit 3 means a PR was unreadable, and is never treated as zero.
 - When the user links a comment, answer it, re-audit, and handle the other ACTION rows in the same turn.
 - Report the linked counts: `N need a response, M awaiting reviewer, K unsent`.
