@@ -19,9 +19,15 @@
 # first character to its last. A body that holds the notice text plus any other text (a real finding in the
 # same review summary) is NOT a notice and stays ACTION. "." does not match a newline, so write "\s" or
 # "(?s:.)" where a pattern must span lines. End a pattern with ".*" to accept trailing text.
-# Default: the Codex quota message; its two later sentences are optional (see DEFAULT_NOTICES).
+# Default: the Codex quota message. It is made only of the literal Codex sentences, link texts and URLs (no
+# free-text class), so prose added to a sentence, or placed inside a link text or URL, makes the body ACTION. The 2nd and 3rd
+# sentences are optional (see DEFAULT_NOTICES).
 # A pair with no colon, an empty login, an empty regex, or a regex jq rejects is a broken config: the script
 # prints an ERROR line on stderr and exits 3 before it reads any PR, so READY cannot pass on it.
+# A pair whose login is "*" is also a broken config when its whole-body regex matches any probe body ("x",
+# "P1: real bug in auth", or a two-line "a\nb"): ".*", ".+" and "(?s:.*)" would turn every comment from every
+# author into INFO and switch the audit off. A "*" pair that matches only notice-like text is allowed.
+# An empty or whitespace-only response, or one with no pullRequest, is unreadable: exit 3, never OK.
 # Exit: 0 nothing actionable, 1 ACTION or UNSENT present, 3 a PR or the config could not be read, or jq failed.
 set -uo pipefail
 
@@ -30,7 +36,7 @@ IGNORE="${IGNORE_LOGINS:-codecov,dependabot,renovate,github-actions-notices}"
 # The real Codex message: "You have reached your Codex usage limits for code reviews. You can see your limits
 # in the [Codex usage dashboard](url).\nTo continue using code reviews, you can upgrade your account or add
 # credits to your account and enable them for code reviews in your [settings](url)."
-DEFAULT_NOTICES='chatgpt-codex-connector[bot]:you have reached your [A-Za-z ]{0,30}usage limits( for code reviews)?\.(\s+you can see your limits in the \[[^\]]*\]\([^)]*\)\.)?(\s+to continue[ A-Za-z,]*(\[[^\]]*\]\([^)]*\)[ A-Za-z,]*)?\.)?'
+DEFAULT_NOTICES='chatgpt-codex-connector[bot]:You have reached your Codex usage limits for code reviews\.(\s+You can see your limits in the \[Codex usage dashboard\]\(https://chatgpt\.com/codex/cloud/settings/usage\)\.)?(\s+To continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your \[settings\]\(https://chatgpt\.com/codex/cloud/settings/code-review\)\.)?'
 NOTICES="${COORD_NOTICE_PATTERNS-$DEFAULT_NOTICES}"
 status=0
 
@@ -42,7 +48,10 @@ if [ -n "$NOTICES" ]; then
       | if $i == null then "pair has no login:regex colon: \($p | tojson)"
         elif ($p[:$i] | test("^\\s*$")) then "pair has an empty login: \($p | tojson)"
         elif ($p[$i+1:] | test("^\\s*$")) then "pair has an empty regex: \($p | tojson)"
-        else try (("" | test($p[$i+1:]; "i") | empty), ("" | test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i") | empty))
+        else try (("" | test($p[$i+1:]; "i") | empty), ("" | test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i") | empty),
+               (if $p[:$i] == "*" and (["x", "P1: real bug in auth", "a\nb"]
+                    | any(.[]; test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i")))
+                then "wildcard login with a regex that matches ordinary text: \($p | tojson)" else empty end))
              catch "regex rejected by jq: \($p[$i+1:] | tojson): \(.)" end' 2>&1); then
     echo "ERROR  could not validate COORD_NOTICE_PATTERNS: ${bad:0:200}" >&2; exit 3
   fi
@@ -65,6 +74,7 @@ query='query($o:String!,$r:String!,$n:Int!){ viewer{login}
 rest_json() {  # host owner repo num
   local h=$1 o=$2 r=$3 n=$4 me threads rc ic rv
   me=$(gh api --hostname "$h" user --jq .login) || return 1
+  [ -n "$me" ] || { echo "empty user response" >&2; return 1; }
   threads=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n/ccr/review_threads") || return 1
   rc=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
   ic=$(gh api --hostname "$h" --paginate "repos/$o/$r/issues/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
@@ -95,6 +105,9 @@ for url in "$@"; do
       echo "ERROR  $url could not be read: ${json:0:200}" >&2; status=3; continue
     fi
   fi
+  if [ -z "${json//[[:space:]]/}" ]; then
+    echo "ERROR  $url empty response" >&2; status=3; continue
+  fi
   out=$(jq -r --arg m "$MARKER" --arg ign "$IGNORE" --arg nt "$NOTICES" '
     def agent: (.body // "") as $b | any($m | split("|")[]; . as $x | $b | contains($x));
     def ignored: ((.author.login // "ghost") as $l | ($ign | split(",")) | index($l)) != null;
@@ -106,7 +119,7 @@ for url in "$@"; do
           | ($pl == "*" or ($pl | unbot) == ($l | unbot)) and ($re != "")
             and ($b | test("\\A\\s*(?:" + $re + ")\\s*\\z"; "i")));
     .data.viewer.login as $me
-    | .data.repository.pullRequest as $pr
+    | (.data.repository.pullRequest // error("response has no pullRequest")) as $pr
     # last agent comment time anywhere on the PR, for PR-level comments and review summaries
     | ([$pr.comments.nodes[], ($pr.reviewThreads.nodes[].comments.nodes[]) | select(agent) | .createdAt] | max // "") as $lastAgent
     | ( $pr.reviewThreads.nodes[] | select(.isResolved | not)
