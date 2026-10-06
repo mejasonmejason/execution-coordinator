@@ -98,7 +98,7 @@ Running independent tasks in sequence is a defect, because it wastes parallel ti
 ## Inventory and ownership
 
 - **One owner and one branch writer per PR** (session, subagent, hosted run, bot, coordinator or human), recorded in the ledger, because two writers overwrite each other.
-- A hosted `@mention` fix agent owns its pushes: `git pull --ff-only` before pushing, and never push while the bot works, because the pushes collide.
+- A hosted `@mention` fix agent owns its pushes. Other agents `git pull --ff-only` before pushing and never push while the bot works, because the pushes collide.
 - **One watcher per PR.** Prefer L3 events; otherwise check threads and checks each sweep.
 - **Classify every task** as exactly one of dispatchable, blocked, in flight, needs attention or closeable. Counts must sum to all tasks; fix unclassified rows before reporting.
 
@@ -155,7 +155,7 @@ Mark `--state accepted` only after all three pass, because `status.sh` refuses `
 
 On each PR, child, hosted-run, backlog or user event: reconcile remote state, route to the task owner, update task and ledger, and report material changes. **No sleep-polling:** end the turn and resume on events, because a sleep blocks the session and misses events.
 
-**Sweep** at least every 15 minutes while work is active, and right after any resume or compaction:
+**Sweep** at the start, at least every 15 minutes while work is active, and right after any resume or compaction:
 
 1. Rediscover PRs and backlog. Pick up new ones; drop merged or closed ones.
 2. Reconcile owners. Reassign anything whose owner is gone.
@@ -174,7 +174,7 @@ Each session owns `.coordinator/status.json`, set by `scripts/status.sh` to `act
 
 Report at once after any push, agent failure, conflict, CI failure, resolved blocker, READY or MERGE, merge, deploy change, new blocking task or required user action. Tool calls, internal messages and ledger edits are not visible updates. Sweeps report only changes.
 
-Link PRs, threads, checks, tasks, docs, deploys, runs and sessions with real URLs from tools or records. Never guess a URL, because a wrong link points at wrong evidence; write `link unavailable` plus the identifier. Local paths are not web links. During long commands, executors checkpoint to their task at least every 10 minutes.
+Link PRs, threads, checks, tasks, docs, deploys, runs and sessions descriptively, with real URLs from tools or records. Never guess a URL, because a wrong link points at wrong evidence; write `link unavailable` plus the identifier. Local paths are not web links. During long commands, executors checkpoint to their task at least every 10 minutes.
 
 Audit comments with `scripts/pr-threads.sh` before PR reports, READY, handoffs or "answered" claims, and reply through REST with the agent marker (commands in the PR feedback reference).
 
