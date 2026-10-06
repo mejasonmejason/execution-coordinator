@@ -1,9 +1,10 @@
 # Keep-alive, status and reports
 
-Read this when you need the operating-layer detail, set or read a session's status, write a `human-gate` or a decision issue, set up the L2 sweeper, install the SessionStart, Stop or merge-gate hook, name sessions, find a second coordinator, write a status report, turn keep-alive off, or offboard a finished project.
+You must read this at the kickoff of any coordination and on every resume, as SKILL.md requires. Read it again before you set a status, write a `human-gate` or a decision issue, set up the L2 sweeper, install a hook, name sessions, write a status report, turn keep-alive off, or offboard a finished project.
 
 ## Contents
 
+- Bundled tools
 - Operating layers
 - Status commands
 - Rules for every agent
@@ -17,6 +18,15 @@ Read this when you need the operating-layer detail, set or read a session's stat
 - Off switches
 - Status report template
 - Offboarding
+
+## Bundled tools
+
+- `scripts/status.sh`: session status, busy lease and dispatch records.
+- `scripts/ready.sh`: the READY check for one PR on one head.
+- `scripts/pr-threads.sh`: the review-thread audit.
+- `hooks/claude-stop-hook.sh` (keep-alive), `hooks/claude-merge-gate.sh` (merge gate) and `hooks/session-start.sh` (re-orients a new, resumed or compacted session).
+
+Set `GH_HOST` for GitHub Enterprise.
 
 ## Operating layers
 
@@ -69,7 +79,7 @@ A human decision is a real choice between options only. Credentials, review wait
 
 ## One coordinator per project
 
-Find and message the live coordinator instead of starting another coordinator or sweeper, because two coordinators make conflicting writes.
+SKILL.md holds the rule: find and message the live coordinator instead of starting a second coordinator or sweeper. The detail:
 
 - If you find two, both stop writing. The one the ledger names keeps the project; if the ledger names neither, the older one keeps it. The other hands over.
 - Silence never transfers ownership.
@@ -193,6 +203,7 @@ Next coordinator action: <...>
 - Lead with what changed. Keep the full sweep inventory below it.
 - State whether each owner is active or inactive, with an `as_of` time.
 - Mark items you did not re-check as stale, with their last-checked time.
+- Link every piece of evidence (PRs, threads, checks, tasks, docs, deploys, runs, sessions) descriptively, with a real URL.
 - Name the running operation of each owner whose state did not change.
 
 A sweep report covers only changes:
