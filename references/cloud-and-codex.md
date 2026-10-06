@@ -1,6 +1,6 @@
 # Claude Code cloud sessions and Codex
 
-Read this when you coordinate from a Claude Code cloud session (claude.ai/code), drive Codex executors, or send messages with `send_message`.
+You must read this before you coordinate from a Claude Code cloud session (claude.ai/code), drive Codex executors, or send messages with `send_message`.
 
 ## Contents
 

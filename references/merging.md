@@ -1,6 +1,6 @@
 # Merging: the READY script, reviews, stacks, queues and post-merge checks
 
-Read this when you run `scripts/ready.sh` or the merge gate and need the detail, when you chase reviews, when you push, restack or merge a PR stack, when a merge-queue batch fails, or before you touch the next PR after a merge.
+You must read this before you run `scripts/ready.sh` or the merge gate, chase reviews, push, restack or merge a PR stack, handle a failed merge-queue batch, or touch the next PR after a merge.
 
 ## Contents
 
@@ -84,3 +84,4 @@ When batch checks fail, isolate the culprit by queue bisection or subset runs. R
 
 - Make writes idempotent: use stable IDs and check before you write, because a retried write must not apply twice.
 - Before a cross-system change that can partly commit, record the repair steps.
+- Read back every configuration or launch change (job or session name, model, advisor, hook), because a field can drop silently.
