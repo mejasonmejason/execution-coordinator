@@ -121,6 +121,37 @@ Put this in `.claude/settings.json` (project) or `~/.claude/settings.json` (user
 
 The SessionStart hook (`hooks/session-start.sh`) adds context only while `.coordinator/status.json` is `active`, `waiting` or `human-gate`. It gives the state, next action and open dispatches, and tells the session to read this skill and the ledger before it acts. After `resume` or `compact` it also says to run the sweep first. When `owner_session` names another session, it says not to take over and to message the owner. With no status or a `done` status it prints nothing, so other sessions pay no context cost. `COORD_SESSION_START=0` turns it off. `COORD_SESSION_START=always` also prints a one-line pointer to the skill when no status exists. A claude.ai/code cloud session loads hooks only from the repo's `.claude/settings.json`, so put the entry there and use a path inside the checkout.
 
+### Per-repo install (cloud sessions and shared repos)
+
+A cloud session keeps no home folder, and the skill's path differs between machines. So put a small resolver in the repo instead of a fixed path. Save it as `.claude/hooks/coordinator.sh` and make it executable. It finds the installed skill, runs the requested hook, and prints nothing when no copy is installed:
+
+```bash
+#!/usr/bin/env bash
+# Runs one execution-coordinator hook (session-start or stop) from wherever the skill is installed.
+# Usage, from .claude/settings.json or .codex/hooks.json: coordinator.sh <session-start|stop>
+# The hook reads the harness JSON on stdin; this script passes stdin through untouched.
+# Search order: $COORD_SKILL_DIR, this repo if it is the skill itself, ~/.claude/skills,
+# claude.ai synced skills (cloud sessions), ~/.agents/skills (Codex). The first copy that ships the
+# requested hook wins. With no copy installed, it reads stdin and exits 0, so a session never breaks.
+# Both hooks print nothing unless <repo>/.coordinator/status.json shows a coordination in progress.
+set -u
+case "${1:-}" in
+  session-start) file=session-start.sh ;;
+  stop) file=claude-stop-hook.sh ;;
+  *) cat >/dev/null; exit 0 ;;
+esac
+root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+for dir in "${COORD_SKILL_DIR:-}" "$root" "$HOME/.claude/skills/execution-coordinator" \
+           "$HOME"/.claude/skills/synced/*/execution-coordinator "$HOME/.agents/skills/execution-coordinator"; do
+  [ -n "$dir" ] && [ -f "$dir/hooks/$file" ] && grep -qs '^name: execution-coordinator$' "$dir/SKILL.md" \
+    && exec bash "$dir/hooks/$file"
+done
+cat >/dev/null
+exit 0
+```
+
+Then point both harnesses at it. In `.claude/settings.json` use `"$CLAUDE_PROJECT_DIR"/.claude/hooks/coordinator.sh session-start` (matcher `startup|resume|clear|compact`) and `... coordinator.sh stop`. In `.codex/hooks.json` use `bash "$(git rev-parse --show-toplevel)/.claude/hooks/coordinator.sh" session-start` and `... stop`. Add the merge gate the same way only if the repo's merge rules should require `ready.sh`, because it blocks every `gh pr merge` that fails READY. This repository and `mejasonmejason/tootsies` use this setup.
+
 ## Quiet hours
 
 Set `COORD_QUIET="00-07"` (local hours). The Stop hook then stays silent in that window. Schedule the sweeper outside it.
