@@ -243,5 +243,13 @@ has "$(cat "$BIN/gate.err")" "could not resolve" "gate: unresolvable reason on s
 rm "$STUB_DIR/pr.json"
 g "gh pr merge $U" "$R"; t $? 2 "gate: unreadable PR fails closed"
 
+# ---- check-skill.py golden negatives -------------------------------------------------------------------------
+# A separate script, so the checker can run this suite for the README count without calling itself. Its PASS/FAIL
+# lines and its TOTAL fold into this suite's totals.
+gold=$(bash "$S/tests/check-skill-goldens.sh" 2>&1); echo "$gold" | grep -v '^TOTAL '
+gp=$(sed -n 's/^TOTAL pass=\([0-9]*\) fail=.*/\1/p' <<<"$gold"); gf=$(sed -n 's/^TOTAL pass=[0-9]* fail=\([0-9]*\)$/\1/p' <<<"$gold")
+if [ -n "$gp" ] && [ -n "$gf" ]; then pass=$((pass + gp)); fail=$((fail + gf))
+else echo "FAIL check-skill goldens printed no TOTAL line"; fail=$((fail + 1)); fi
+
 echo "TOTAL pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

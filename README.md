@@ -14,8 +14,12 @@ A skill for Claude and Codex that acts as a control tower for multi-PR engineeri
 | `scripts/status.sh` | Keeps a session's status, busy lease and dispatch records. |
 | `hooks/claude-merge-gate.sh` | PreToolUse hook for Claude Code and Codex. Blocks a merge unless `ready.sh` passes. |
 | `hooks/claude-stop-hook.sh` | Stop hook for Claude Code and Codex. Keeps the owning session working while its status is active. |
+| `references/` | Detail that `SKILL.md` loads only when a task needs it. |
+| `evals/` | Model-behavior and trigger evals; see `evals/README.md`. |
 | `tests/run.sh` | Offline test suite. `gh` is replaced by a stub, so nothing touches GitHub. |
 | `docs/OVERVIEW.md` | Diagrams of the whole skill. GitHub draws them from Mermaid. |
+| `tests/check-skill-goldens.sh` | Negative tests for `.github/scripts/check-skill.py`. Each bad input must fail the check. |
+| `.github/scripts/check-skill.py` | Upload and drift checks: frontmatter, size budget, `references/` links, `agents/openai.yaml`, README test count. |
 | `agents/openai.yaml` | Codex display name, short description and default prompt. |
 
 ## Release and install
@@ -36,7 +40,7 @@ Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and 
 ## Test
 
 ```bash
-bash tests/run.sh   # 93 cases, offline; exit 0 when all pass
+bash tests/run.sh   # 110 cases, offline; exit 0 when all pass
 ```
 
 Run the suite before and after every change. A rule that a script can enforce gets a test case.
@@ -55,3 +59,4 @@ Run the suite before and after every change. A rule that a script can enforce ge
 | v8 | Credentials stay with the owner, who is asked directly; decision issues only for real choices. Seven rules from the internal version: sweep after compaction, drift checks on long-running writers, 10-minute checkpoints, mobile widths, checking discovery before trusting zero, one heavy local job at a time, stack pushes through the stack tool. |
 | v9 | Review effort scales with risk: advisors, scouts and extra reviewers only for high risk or real uncertainty; three-reviewer acceptance stays for auth, security, payments, ledger, data migrations, infrastructure and weakened gates. Bookkeeping is implied in plans. Restores rules a rule-by-rule audit found weakened, settles who keeps a project when two coordinators collide, and fixes the heavy-local-job contradiction. Same size. In head-to-head tests efficiency rose from 3.86 to 4.02 of 5. |
 | v10 | Codex support. The hooks run unchanged under Codex hooks. `status.sh` takes the session owner from the nearest `claude` or `codex` process, so an id inherited from a parent agent does not win. `SKILL.md` §0a maps executors, resume, sandbox network, hooks and reply markers to Codex. CI checks `agents/openai.yaml`. Diagrams in `docs/OVERVIEW.md`. |
+| v11 | The description is narrower and in the third person. `SKILL.md` fits the 5,000-token budget, and detail moved to `references/`. Section numbers no longer jump, and hard rules give their reasons. Model evals live in `evals/`. CI checks for drift: size budget, reference links, `agents/openai.yaml` limits and the README test count. |
