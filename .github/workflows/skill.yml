@@ -22,7 +22,20 @@ jobs:
         run: bash tests/run.sh
 
       - name: Upload rules
-        run: python3 .github/scripts/check-skill.py
+        run: python3 scripts/check-skill.py
+
+      # Build the zip the way the release job does (keep the two build steps identical), unpack it into a temp
+      # directory, and run the suite from the unpacked copy. This proves the shipped zip can run its own tests.
+      - name: Test the unpacked release zip
+        run: |
+          mkdir -p build
+          git archive --format=tar --prefix=execution-coordinator/ HEAD | tar -x -C build
+          rm -rf build/execution-coordinator/.github
+          chmod +x build/execution-coordinator/scripts/*.sh build/execution-coordinator/hooks/*.sh build/execution-coordinator/tests/run.sh
+          (cd build && zip -q -9 -r -D -X ../execution-coordinator.zip execution-coordinator)
+          unpacked=$(mktemp -d)
+          unzip -q execution-coordinator.zip -d "$unpacked"
+          (cd "$unpacked/execution-coordinator" && bash tests/run.sh)
 
       - name: No "-public" name left
         run: |
@@ -37,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Keep these build lines identical to the ones in the check job ("Test the unpacked release zip").
       - name: Build zip
         id: zip
         run: |
