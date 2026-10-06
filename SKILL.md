@@ -132,7 +132,7 @@ Run `scripts/ready.sh <pr-url> --sha <reported head> [--key <dispatch>] [--paths
 **MERGE** when READY holds, required approvals are on the current head, merge authority is recorded, and right before merging:
 
 1. Stop task-owner pushes and re-fetch. Verify the intended `baseRefName` (trunk for a stack bottom) and eligibility. Hold during rework; a changed head needs new CI, review and decision.
-2. Pass the merge gate: the installed `hooks/claude-merge-gate.sh` (keep-alive reference) fails closed; without it, run `scripts/ready.sh` yourself. Override only a verified-wrong blocker, and disclose it.
+2. Pass the merge gate: the installed `hooks/claude-merge-gate.sh` (keep-alive reference) fails closed; without it, run `scripts/ready.sh` yourself. For a dispatched PR, also run `ready.sh --key <key> --sha <head>`, because after the merge `accepted` cannot be recorded. Override only a verified-wrong blocker, and disclose it.
 3. Merge through the repo's path: merge queue, else `gh pr merge` with the repo's method.
 4. If trunk auto-deploys, schedule a deploy check at once or use the sweeper. Verify deployment and runtime signals before done, because a merge is not a working deploy.
 5. Retire the executor once its task is accepted, merged and verified and it owns no other open PR or fix round: confirm the dispatch is `accepted`, then archive it (cloud) or rename it `[done] <name>` and close it.
