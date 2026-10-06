@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Claude Code Stop hook for execution-coordinator keep-alive.
-# Add to .claude/settings.json (project) or ~/.claude/settings.json (user):
+# Stop hook for execution-coordinator keep-alive. Works in Claude Code and Codex (same input and output format).
+# Claude Code: add to .claude/settings.json (project) or ~/.claude/settings.json (user).
+# Codex: add to .codex/hooks.json (project; the project must be trusted) or ~/.codex/hooks.json (user).
 #   { "hooks": { "Stop": [ { "hooks": [ { "type": "command",
 #       "command": "/path/to/execution-coordinator/hooks/claude-stop-hook.sh" } ] } ] } }
 # When <git root>/.coordinator/status.json says "active", the hook blocks the stop and feeds back the
 # next action. It gives up after 8 stops with no change to state, next action, HEAD, or working tree.
 # It never blocks a different session: when the status records owner_session (set by scripts/status.sh from
-# $CLAUDE_CODE_SESSION_ID) and this hook's session_id differs, the stop goes through. It also stands down while
+# the nearest claude or codex process) and this hook's session_id differs, the stop goes through. It also stands down while
 # busy_until (status.sh set ... --busy N) is in the future.
 # Off: export COORD_KEEPALIVE=0. Quiet hours: export COORD_QUIET="00-07" (local hours, start-end).
 set -uo pipefail

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse merge gate for execution-coordinator.
-# Add to .claude/settings.json (project) or ~/.claude/settings.json (user):
+# PreToolUse merge gate for execution-coordinator. Works in Claude Code and Codex (same input and output format).
+# Claude Code: add to .claude/settings.json (project) or ~/.claude/settings.json (user).
+# Codex: add to .codex/hooks.json (project; the project must be trusted) or ~/.codex/hooks.json (user).
 #   { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command",
 #       "command": "/path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] } ] } }
 # On `gh pr merge` (not --disable-auto) or `gh api .../pulls/N/merge`, it resolves the PR and runs scripts/ready.sh
@@ -13,7 +14,8 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ready="$here/../scripts/ready.sh"
 input=$(cat)
-command=$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)
+# Claude Code and Codex send a string; an argv array is joined so the parser still sees `gh pr merge`.
+command=$(jq -r '.tool_input.command // empty | if type == "array" then join(" ") else . end' <<<"$input" 2>/dev/null)
 cwd=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)
 [ -n "$cwd" ] && [ -d "$cwd" ] || cwd=$PWD
 [ -n "$command" ] || exit 0
