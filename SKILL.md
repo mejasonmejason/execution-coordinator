@@ -424,6 +424,9 @@ Offboard: `--busy 0`; dispatches `accepted`/`abandoned`; remove project-created 
 Every code-checkable lesson needs an offline, fixture-backed `gh` case in `tests/run.sh`. Pass before and after skill/script/hook changes.
 
 Resume-time checks not covered above:
+- Before the first push and every later push, run the repo's CI-equivalent checks on the changed files with pinned tools (`npx <tool>@<version from package.json>`, `gofmt -l`, `go vet`). A missing install is a problem to solve, not a reason to skip. If a check truly cannot run, mark it unverified on the task and read the first CI result at once; "relying on CI" is not a plan.
+- CI red: read the failing diagnostic before any rebase or rerun. If the log is truncated or buried in warnings, reproduce locally with error-level filtering and a higher diagnostic cap, and compare with the same job on base to tell pre-existing from caused. At most one speculative push per failure.
+- Before changing code for an error string, search it across the org's repos to find the owning one; a client workaround for a backend limit needs the owner's decision on the task.
 - Schedule your own next check; never rely solely on sweeper. Offset triggers: §8.
 - Audit exit 3: report unreadable; use REST `gh api --paginate repos/O/R/pulls/N/comments`, `.../issues/N/comments`, `.../pulls/N/reviews`. Resolution remains unverified; retry GraphQL after reset (`gh api rate_limit`). Conflicting audits: prefer more owed items.
 - Notify owners of owed replies regardless of status; standing authority: §2; held replies: §8a.
