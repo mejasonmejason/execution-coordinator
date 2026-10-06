@@ -223,9 +223,9 @@ setj graphql.json ".data.repository.pullRequest.reviews.nodes = [] | .data.repos
 out=$(COORD_NOTICE_PATTERNS="" "$pt" "$U"); t $? 1 "notice: an empty COORD_NOTICE_PATTERNS turns the default off"
 has "$out" "ACTION    PR comment by chatgpt-codex-connector" "notice: with the default off the notice is ACTION"
 setj graphql.json ".data.repository.pullRequest.reviews.nodes = [] | .data.repository.pullRequest.comments.nodes = $(cm 'acme-bot' 'Build quota: 12:30 left')"
-out=$(COORD_NOTICE_PATTERNS="acme-bot:quota: \\d+:\\d+ left" "$pt" "$U"); t $? 0 "notice: a custom pattern matches (colon in the regex)"
+out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota: \\d+:\\d+ left" "$pt" "$U"); t $? 0 "notice: a custom pattern matches (colon in the regex)"
 has "$out" "INFO      notice by acme-bot" "notice: a custom pattern is INFO"
-out=$(COORD_NOTICE_PATTERNS="other:zzz|*:build quota" "$pt" "$U"); t $? 0 "notice: a wildcard login in a pattern list matches"
+out=$(COORD_NOTICE_PATTERNS="other:zzz|*:build quota.*" "$pt" "$U"); t $? 0 "notice: a wildcard login in a pattern list matches"
 # the REST fallback keeps the [bot] suffix on the login
 fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
 echo "[{\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"$QN\",\"html_url\":\"n2\",\"created_at\":\"2026-01-01T00:00:00Z\"}]" > "$STUB_DIR/icomments.json"
@@ -233,6 +233,82 @@ out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 0 "notice: REST fallback quota notice 
 has "$out" "INFO      notice by chatgpt-codex-connector[bot]: n2" "notice: REST fallback reports the notice as INFO"
 echo "[{\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"P1 real bug\",\"html_url\":\"n3\",\"created_at\":\"2026-01-01T00:00:00Z\"}]" > "$STUB_DIR/icomments.json"
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "notice: REST fallback real comment from the same login is ACTION"
+# Whole-body anchoring and fail-closed config/jq handling (issue #18)
+RQ=$'You have reached your Codex usage limits for code reviews. You can see your limits in the [Codex usage dashboard](https://chatgpt.com/codex/cloud/settings/usage).\nTo continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your [settings](https://chatgpt.com/codex/cloud/settings/code-review).'
+FIND=$'\n\nAlso: src/x.ts:12 leaks the token'
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$RQ")"
+out=$("$pt" "$U"); rc=$?
+t "$rc" 0 "anchor: the exact real 2-line Codex quota body is a notice (exit 0)"
+has "$out" "INFO      notice by chatgpt-codex-connector: n1" "anchor: the exact real quota body is INFO"
+hasnt "$out" "ACTION" "anchor: the exact real quota body is not ACTION"
+"$ready" "$U" --paths "$ALL" >/dev/null; t $? 0 "anchor: ready.sh is READY with only the real quota body"
+setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$RQ$FIND")"
+out=$("$pt" "$U"); rc=$?
+t "$rc" 1 "anchor: quota text plus a real finding in one comment exits 1"
+has "$out" "ACTION    PR comment by chatgpt-codex-connector: n1" "anchor: quota text plus a finding is ACTION"
+hasnt "$out" "INFO" "anchor: quota text plus a finding is not INFO"
+out=$("$ready" "$U" --paths "$ALL"); t $? 1 "anchor: ready.sh blocks on quota text plus a finding"
+has "$out" "reply owed: ACTION PR comment by chatgpt-codex-connector" "anchor: ready.sh names the owed reply"
+setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$FIND$RQ")"
+out=$("$pt" "$U"); t $? 1 "anchor: a finding before the quota text is ACTION"
+setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' 'You have reached your Codex usage limits for code reviews. Also: src/x.ts:12 leaks the token')"
+out=$("$pt" "$U"); t $? 1 "anchor: a finding on the first sentence line is ACTION"
+setj graphql.json ".data.repository.pullRequest.comments.nodes = [] | .data.repository.pullRequest.reviews.nodes = [{state:\"COMMENTED\",author:{login:\"chatgpt-codex-connector\"},body:$(jq -Rn --arg b "$RQ$FIND" '$b'),url:\"r2\",submittedAt:\"2026-01-01T00:00:00Z\",comments:{totalCount:0}}]"
+out=$("$pt" "$U"); t $? 1 "anchor: quota text plus a finding in a review summary exits 1"
+has "$out" "ACTION    review summary (COMMENTED) by chatgpt-codex-connector: r2" "anchor: that review summary is ACTION"
+setj graphql.json ".data.repository.pullRequest.reviews.nodes[0].body = $(jq -Rn --arg b "$RQ" '$b')"
+out=$("$pt" "$U"); t $? 0 "anchor: the real quota body alone in a review summary is INFO"
+has "$out" "INFO      notice by chatgpt-codex-connector: r2" "anchor: the real quota body in a review summary is reported INFO"
+setj graphql.json ".data.repository.pullRequest.reviews.nodes = [] | .data.repository.pullRequest.comments.nodes = $(cm 'acme-bot' $'Build quota low\nplease look')"
+out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota" "$pt" "$U"); t $? 1 "anchor: a custom pattern must cover the whole body"
+out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota(?s:.*)" "$pt" "$U"); t $? 0 "anchor: a custom pattern with a trailing wildcard accepts the rest"
+# a broken COORD_NOTICE_PATTERNS fails closed: exit 3 with an ERROR line, never OK and never READY
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' 'P1: this loop never exits')"
+out=$(COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$pt" "$U" 2>&1); rc=$?
+t "$rc" 3 "config: an invalid regex exits 3 (issue #18 repro)"
+has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS" "config: an invalid regex prints an ERROR line"
+hasnt "$out" "OK " "config: an invalid regex never prints OK"
+err=$(COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$pt" "$U" 2>&1 >/dev/null); has "$err" "ERROR" "config: the ERROR line goes to stderr"
+out=$(COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$ready" "$U" --paths "$ALL" 2>&1); rc=$?
+t "$rc" 1 "config: ready.sh is not READY with an invalid COORD_NOTICE_PATTERNS"
+has "$out" "fail closed" "config: ready.sh reports the unreadable audit as fail closed"
+has "$out" "NOT READY" "config: ready.sh prints NOT READY on a broken config"
+for bad in "abc" "abc:" ":x" "a:b|" "a:b)(" "a:(unclosed"; do
+  out=$(COORD_NOTICE_PATTERNS="$bad" "$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "config: COORD_NOTICE_PATTERNS='$bad' exits 3"
+  hasnt "$out" "OK " "config: COORD_NOTICE_PATTERNS='$bad' never prints OK"
+done
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
+out=$(STUB_NO_GRAPHQL=1 COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$pt" "$U" 2>&1); t $? 3 "config: an invalid regex exits 3 through the REST fallback"
+# a jq failure in the audit is unreadable (exit 3), never OK
+fixtures; echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":null}}}' > "$STUB_DIR/graphql.json"
+out=$("$pt" "$U" 2>&1); rc=$?
+t "$rc" 3 "jq: a response the filter cannot process exits 3"
+has "$out" "ERROR  $U audit failed" "jq: the failed audit prints an ERROR line"
+hasnt "$out" "OK " "jq: the failed audit never prints OK"
+out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "jq: ready.sh is not READY when the audit jq fails"
+has "$out" "fail closed" "jq: ready.sh fails closed on the failed audit"
+echo 'not json' > "$STUB_DIR/graphql.json"
+out=$("$pt" "$U" 2>&1); rc=$?; t "$rc" 3 "jq: a non-JSON response exits 3"; hasnt "$out" "OK " "jq: a non-JSON response never prints OK"
+fixtures; restfx; echo '[{"resolved":false,"outdated":false}]' > "$STUB_DIR/threads.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U" 2>&1); rc=$?
+t "$rc" 3 "jq: REST fallback with a thread the rebuild cannot process exits 3"
+hasnt "$out" "OK " "jq: REST fallback jq failure never prints OK"
+# the same anchoring through the REST fallback
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
+jq -n --arg b "$RQ" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n4",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); rc=$?
+t "$rc" 0 "anchor: REST fallback exact real quota body exits 0"
+has "$out" "INFO      notice by chatgpt-codex-connector[bot]: n4" "anchor: REST fallback exact real quota body is INFO"
+jq -n --arg b "$RQ$FIND" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n5",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); rc=$?
+t "$rc" 1 "anchor: REST fallback quota text plus a finding exits 1"
+has "$out" "ACTION    PR comment by chatgpt-codex-connector[bot]: n5" "anchor: REST fallback quota text plus a finding is ACTION"
+echo '[]' > "$STUB_DIR/icomments.json"
+echo "[{\"id\":21,\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":$(jq -Rn --arg b "$RQ$FIND" '$b'),\"html_url\":\"n6\",\"state\":\"COMMENTED\",\"submitted_at\":\"2026-01-01T00:00:00Z\"}]" > "$STUB_DIR/reviews.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); rc=$?
+t "$rc" 1 "anchor: REST fallback quota text plus a finding in a review summary exits 1"
+has "$out" "ACTION    review summary (COMMENTED) by chatgpt-codex-connector[bot]: n6" "anchor: REST fallback review summary with a finding is ACTION"
 fixtures; echo '{"status":"diverged"}' > "$STUB_DIR/compare.json"
 out=$("$ready" "$U" --paths "$ALL" --base-sha 1234567890); t $? 0 "ready: divergence from base is a warning, not a block"
 has "$out" "does not descend from dispatch base" "ready: divergence warning"
