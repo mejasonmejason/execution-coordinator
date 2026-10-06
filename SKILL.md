@@ -71,7 +71,7 @@ At kickoff, read the repo rules (CLAUDE.md, AGENTS.md, a steward or babysit skil
 
 ## Completion fence and plan
 
-Write root-task criteria as observable results: code, tests, CI, threads, stack ancestry, merge, deployment, journeys, demos. Before dispatch, graph dependencies, parallel tasks and parent branches, and set milestones. Verify combined results and interfaces before dependent phases.
+Write root-task criteria as observable results: code, tests, CI, threads, stack ancestry, merge, deployment, journeys, demos. Before dispatch, graph dependencies, parallel tasks and parent branches, and set milestone checks. Verify combined results and interfaces before dependent phases.
 
 Cite code claims as `path:line`. Reject or verify uncited claims before execution. Completion needs remote evidence, not local commits, tests or agent claims, because only remote state merges.
 
@@ -87,7 +87,7 @@ Running independent tasks in sequence is a defect, because it wastes parallel ti
 ## Guardrails for delegated work
 
 1. **No short deadlines, token budgets or PR-size caps**, because they cut work off unfinished. Judge progress, not age. When a child, session or hosted run stops, times out, fails or idles, resume or redispatch it from its checkpoint in the same turn.
-2. **Brief:** objective, output format, tools and sources, `files_to_read`, owned globs, fence, decisions, and expected fan-out (one agent for a fact or small fix, several for independent changes, more for broad work). Ask for status, commits, tests, new items, blockers, a short summary and a report or PR link, not raw logs.
+2. **Brief:** objective, output format, tools and sources, `files_to_read`, owned globs, fence, decisions, and expected fan-out (one agent for a fact or small fix, several for independent changes, more for broad work). Ask for status, commits, tests, new items, blockers and a short summary; detail goes in the report, PR or task, not raw logs.
 3. **Never delete, skip, weaken or re-baseline tests or lint for green**, because green then proves nothing. Explain test changes in the PR; the test-integrity rules are in the validation reference.
 4. **Review:** prefer stacks for large changes. Keep PRs draft until required CI is green. Acceptance review comes before human review.
 5. **Serialize merges** through a queue or one at a time, because parallel merges hide which one broke trunk. Isolate a failed batch by bisection.
