@@ -1,0 +1,2 @@
+# Keep the eval suite out of the release zip (git archive). It is repo tooling, not skill content.
+evals/ export-ignore
