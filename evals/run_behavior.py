@@ -13,6 +13,16 @@ Usage:
   python3 evals/run_behavior.py --skill SKILL.md --out /tmp/g --goldens-only
   python3 evals/run_behavior.py --skill SKILL.md --out /tmp/v10x3 --runs 3      # mean and min-max per eval
   python3 evals/run_behavior.py --no-skill --out /tmp/bare --runs 3             # baseline: no skill text
+  python3 evals/run_behavior.py --skill SKILL.md --load skill-only --out /tmp/so --runs 3   # realistic loading
+
+Loading modes (--load):
+  all         (default) SKILL.md and every references/*.md are pasted into the prompt; no tools.
+              Comparable with every earlier result. It cannot see a rule that the model skips
+              because it lives in a reference the model chose not to open.
+  skill-only  Only SKILL.md is in the prompt. SKILL.md and references/*.md (nothing else) are
+              copied into a fresh temp folder per run, and `claude -p` runs there with only the
+              Read, Glob and Grep tools (--restricted keeps them inside that folder). The model
+              decides itself which references to open. Each run records the files it opened.
 
 Needs the `claude` CLI on PATH (Claude Code). No API key or SDK. Python 3.9+, stdlib only.
 A timeout, a CLI error or an unparsable grade counts as a FAIL and is marked as an error.
@@ -24,6 +34,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,6 +57,26 @@ User request:
 </request>
 
 Respond with what you would do and say. You cannot run tools; describe the actions."""
+
+# skill-only: the shape Claude Code uses when a skill loads (body plus its base directory).
+SKILL_ONLY_TEMPLATE = """You have this skill loaded:
+
+Base directory for this skill: {skill_dir}
+
+<skill>
+{skill}
+</skill>
+
+User request:
+<request>
+{prompt}
+</request>
+
+You have read-only file tools (Read, Glob, Grep) inside the skill's base directory. You cannot run
+commands or reach GitHub or any other system. Respond with what you would do and say; describe
+the actions."""
+
+SKILL_ONLY_TOOLS = "Read,Glob,Grep"
 
 NO_SKILL_TEMPLATE = """User request:
 <request>
@@ -98,39 +129,55 @@ class Claude:
             self.env.pop("CLAUDE_CODE_SYNC_SKILLS", None)
             self.env["HOME"] = tempfile.mkdtemp(prefix="ec-evals-home-")
 
-    def ask(self, prompt: str, model: str | None = None) -> dict:
-        """Return {"status": ok|timeout|error, "text": str, "detail": str, "attempts": n}."""
-        cmd = ["claude", "-p", "--output-format", "json", "--tools", "", "--disable-slash-commands",
-               "--strict-mcp-config", "--no-session-persistence"]
+    def ask(self, prompt: str, model: str | None = None, cwd: str | None = None,
+            read_tools: bool = False) -> dict:
+        """Return {"status": ok|timeout|error, "text": str, "detail": str, "attempts": n}.
+
+        read_tools=True is the skill-only mode: Read/Glob/Grep only, confined to `cwd`, with a
+        stream-json transcript so the result also carries "tool_calls" (every tool use in order).
+        """
+        cmd = ["claude", "-p", "--disable-slash-commands", "--strict-mcp-config", "--no-session-persistence"]
+        if read_tools:
+            cmd += ["--output-format", "stream-json", "--verbose", "--tools", SKILL_ONLY_TOOLS,
+                    "--allowedTools", SKILL_ONLY_TOOLS, "--permission-mode", "dontAsk", "--restricted"]
+        else:
+            cmd += ["--output-format", "json", "--tools", ""]
         m = model or self.model
         if m:
             cmd += ["--model", m]
-        last = {"status": "error", "text": "", "detail": "not run"}
+        last: dict = {"status": "error", "text": "", "detail": "not run"}
         t0 = time.monotonic()
+        tool_calls: list[dict] = []
         for attempt in range(1, self.retries + 2):
             with self._lock:
                 self.calls += 1
             try:
                 p = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                                   timeout=self.timeout, cwd=self.cwd, env=self.env)
+                                   timeout=self.timeout, cwd=cwd or self.cwd, env=self.env)
             except subprocess.TimeoutExpired:
                 last = {"status": "timeout", "text": "", "detail": f"no answer in {self.timeout}s"}
                 continue
-            try:
-                d = json.loads(p.stdout)
-            except json.JSONDecodeError:
-                last = {"status": "error", "text": "",
-                        "detail": f"exit {p.returncode}; stdout not JSON: {p.stdout[:200]!r} {p.stderr[:200]!r}"}
+            if read_tools:
+                d, tool_calls = parse_stream(p.stdout)
+            else:
+                try:
+                    d = json.loads(p.stdout)
+                except json.JSONDecodeError:
+                    d = None
+            if d is None:
+                last = {"status": "error", "text": "", "tool_calls": tool_calls,
+                        "detail": f"exit {p.returncode}; no JSON result: {p.stdout[-200:]!r} {p.stderr[:200]!r}"}
                 continue
             with self._lock:
                 self.models_seen.update(d.get("modelUsage", {}).keys())
                 self.cost_usd += float(d.get("total_cost_usd") or 0)
             text = d.get("result") or ""
             if d.get("is_error") or p.returncode != 0 or not text.strip():
-                last = {"status": "error", "text": text, "detail": f"exit {p.returncode}; is_error={d.get('is_error')}"}
+                last = {"status": "error", "text": text, "tool_calls": tool_calls,
+                        "detail": f"exit {p.returncode}; is_error={d.get('is_error')}; subtype={d.get('subtype')}"}
                 continue
             u = d.get("usage") or {}
-            return {"status": "ok", "text": text, "detail": "", "attempts": attempt,
+            return {"status": "ok", "text": text, "detail": "", "attempts": attempt, "tool_calls": tool_calls,
                     "seconds": round(time.monotonic() - t0, 1),
                     "tokens": {"input": int(u.get("input_tokens") or 0)
                                + int(u.get("cache_read_input_tokens") or 0)
@@ -140,6 +187,73 @@ class Claude:
         last["attempts"] = self.retries + 1
         last["seconds"] = round(time.monotonic() - t0, 1)
         return last
+
+
+def parse_stream(stdout: str) -> tuple[dict | None, list[dict]]:
+    """Parse `--output-format stream-json` output: the final result object and every tool call.
+
+    Each tool call is {"tool", "input", "ok"}; ok is False when its tool_result was an error
+    (for example a path outside the folder). A missing result line returns None (an error).
+    """
+    result = None
+    calls: dict[str, dict] = {}
+    order: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("type")
+        content = (ev.get("message") or {}).get("content") if kind in ("assistant", "user") else None
+        if kind == "assistant" and isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get("type") == "tool_use":
+                    cid = str(c.get("id") or len(order))
+                    calls[cid] = {"tool": c.get("name"), "input": c.get("input") or {}, "ok": None}
+                    order.append(cid)
+        elif kind == "user" and isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in calls:
+                    calls[c["tool_use_id"]]["ok"] = not c.get("is_error")
+        elif kind == "result":
+            result = ev
+    return result, [calls[i] for i in order]
+
+
+def skill_files(skill_md: Path) -> list[tuple[str, Path]]:
+    """(relative path, source) for SKILL.md and every references/*.md next to it."""
+    files = [("SKILL.md", skill_md)]
+    refs = skill_md.parent / "references"
+    if refs.is_dir():
+        files += [(f"references/{f.relative_to(refs).as_posix()}", f) for f in sorted(refs.rglob("*.md"))]
+    return files
+
+
+def stage_skill(skill_md: Path) -> str:
+    """Copy SKILL.md and references/*.md (nothing else) into a fresh temp folder; return its path."""
+    root = tempfile.mkdtemp(prefix="ec-evals-skill-")
+    for rel, src in skill_files(skill_md):
+        dst = Path(root) / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+    return root
+
+
+def opened_files(tool_calls: list[dict], root: str) -> list[str]:
+    """Relative paths of the files the model read successfully, in first-read order."""
+    seen: list[str] = []
+    real_root = os.path.realpath(root)
+    for c in tool_calls:
+        if c["tool"] != "Read" or not c.get("ok"):
+            continue
+        fp = str(c["input"].get("file_path") or "")
+        full = os.path.realpath(fp if os.path.isabs(fp) else os.path.join(root, fp))
+        rel = os.path.relpath(full, real_root) if full.startswith(real_root + os.sep) else fp
+        if rel not in seen:
+            seen.append(rel)
+    return seen
 
 
 def load_skill(skill_md: Path) -> str:
@@ -201,6 +315,9 @@ def main() -> int:
     ap.add_argument("--skill", help="path to the SKILL.md to test (or its folder)")
     ap.add_argument("--no-skill", action="store_true",
                     help="baseline: send the same prompts with no skill text (goldens are still graded)")
+    ap.add_argument("--load", choices=["all", "skill-only"], default="all",
+                    help="all (default): SKILL.md + every reference in the prompt, no tools. "
+                         "skill-only: SKILL.md in the prompt; references readable with Read/Glob/Grep")
     ap.add_argument("--out", required=True, help="output directory")
     ap.add_argument("--evals", default=str(HERE / "evals.json"))
     ap.add_argument("--runs", type=int, default=1, help="answers per eval; the summary shows mean and min-max")
@@ -219,6 +336,9 @@ def main() -> int:
         ap.error("--runs must be 1 or more")
     if args.no_skill == bool(args.skill):
         ap.error("give exactly one of --skill PATH or --no-skill")
+    if args.no_skill and args.load != "all":
+        ap.error("--load skill-only needs --skill")
+    skill_only = args.load == "skill-only"
 
     skill_md: Path | None = None
     skill_text = ""
@@ -245,17 +365,38 @@ def main() -> int:
     def exps_of(e: dict) -> list[str]:
         return e.get("expectations") or e.get("assertions") or []
 
-    def answer_prompt(e: dict) -> str:
+    def answer_prompt(e: dict, skill_dir: str = "") -> str:
         if args.no_skill:
             return NO_SKILL_TEMPLATE.format(prompt=e["prompt"])
+        if skill_only:
+            assert skill_md is not None
+            return SKILL_ONLY_TEMPLATE.format(skill_dir=skill_dir, prompt=e["prompt"],
+                                              skill=skill_md.read_text(encoding="utf-8"))
         return ANSWER_TEMPLATE.format(skill=skill_text, prompt=e["prompt"])
 
     def run_one(e: dict, n: int) -> dict:
-        r = claude.ask(answer_prompt(e))
+        reads: dict = {}
+        if skill_only:
+            assert skill_md is not None
+            skill_dir = stage_skill(skill_md)
+            try:
+                r = claude.ask(answer_prompt(e, skill_dir), cwd=skill_dir, read_tools=True)
+            finally:
+                shutil.rmtree(skill_dir, ignore_errors=True)
+            calls = r.get("tool_calls") or []
+            opened = opened_files(calls, skill_dir)
+            reads = {"files_opened": opened,
+                     "references_opened": [f for f in opened if f.startswith("references/")],
+                     "tool_calls": [{"tool": c["tool"], "ok": c["ok"],
+                                     "arg": str(c["input"].get("file_path") or c["input"].get("pattern") or "")
+                                     .replace(skill_dir, "<skill_dir>")} for c in calls]}
+        else:
+            r = claude.ask(answer_prompt(e))
         fname = f"answers/{e['name']}.md" if args.runs == 1 else f"answers/{e['name']}.run{n}.md"
         (out / fname).write_text(
             r["text"] if r["status"] == "ok" else f"ANSWER {r['status']}: {r['detail']}\n{r['text']}", encoding="utf-8")
         row = {"run": n, "answer_status": r["status"], "answer_attempts": r.get("attempts"), "answer_file": fname,
+               **reads,
                "answer_words": len(r["text"].split()) if r["status"] == "ok" else 0,
                "answer_seconds": r.get("seconds"), "answer_tokens": r.get("tokens"),
                "answer_cost_usd": r.get("cost_usd")}
@@ -268,9 +409,11 @@ def main() -> int:
             row["expectations"], row["grader_status"] = g["expectations"], g["status"]
         row["summary"] = summarize(row["expectations"])
         row["all_passed"] = row["summary"]["failed"] == 0
+        opened_note = (f", opened {', '.join(reads['references_opened']) or 'no references'}"
+                       if skill_only else "")
         print(f"[eval] {e['name']} run {n}: {row['summary']['passed']}/{row['summary']['total']} "
               f"(answer {r['status']}, grader {row['grader_status']}, {row['answer_words']} words, "
-              f"{row['answer_seconds']}s)", file=sys.stderr)
+              f"{row['answer_seconds']}s{opened_note})", file=sys.stderr)
         return row
 
     def run_golden(e: dict) -> dict:
@@ -316,6 +459,7 @@ def main() -> int:
             "answer_words": spread([r["answer_words"] for r in ok_runs]),
             "answer_seconds": spread([r["answer_seconds"] or 0 for r in ok_runs]),
             "answer_output_tokens": spread([(r["answer_tokens"] or {}).get("output", 0) for r in ok_runs]),
+            **({"references_opened": count_refs(runs)} if skill_only else {}),
         })
 
     all_runs = [r for row in rows for r in row["runs"]]
@@ -323,6 +467,9 @@ def main() -> int:
     errors = sum(1 for x in all_exps if x.get("status") != "ok")
     result = {
         "mode": "no-skill" if args.no_skill else "skill",
+        "load": None if args.no_skill else args.load,
+        "skill_md_chars": len(skill_md.read_text(encoding="utf-8")) if skill_md else 0,
+        "skill_references": [rel for rel, _ in skill_files(skill_md)][1:] if skill_md else [],
         "skill_path": str(skill_md) if skill_md else None,
         "skill_sha256": hashlib.sha256(skill_text.encode()).hexdigest() if skill_text else None,
         "skill_chars": len(skill_text),
@@ -341,7 +488,8 @@ def main() -> int:
                     "answer_words": spread([r["answer_words"] for r in all_runs if r["answer_status"] == "ok"]),
                     "answer_seconds": spread([r["answer_seconds"] or 0 for r in all_runs
                                               if r["answer_status"] == "ok"]),
-                    "goldens": len(goldens), "goldens_caught": sum(1 for g in goldens if g["golden_caught"])},
+                    "goldens": len(goldens), "goldens_caught": sum(1 for g in goldens if g["golden_caught"]),
+                    **({"references_opened": count_refs(all_runs)} if skill_only else {})},
         "evals": rows,
         "goldens": goldens,
     }
@@ -350,6 +498,21 @@ def main() -> int:
     print(render_summary(result))
     # Exit 1 when a golden is not caught (toothless assertions) or a call errored.
     return 1 if (goldens and result["summary"]["goldens_caught"] < len(goldens)) or errors else 0
+
+
+def count_refs(runs: list[dict]) -> dict[str, int]:
+    """How many of these runs opened each reference file."""
+    counts: dict[str, int] = {}
+    for r in runs:
+        for f in r.get("references_opened") or []:
+            counts[f] = counts.get(f, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _refs_cell(counts: dict[str, int], runs: int) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(f"{k.removeprefix('references/')} {v}/{runs}" for k, v in counts.items())
 
 
 def _cell(x: str, n: int) -> str:
@@ -369,6 +532,13 @@ def render_summary(r: dict) -> str:
         f"- Runs per eval: {r['runs_per_eval']}; `claude -p` calls: {r['claude_calls']} "
         f"(reported cost ${r['cost_usd_reported']})",
     ]
+    skill_only = r.get("load") == "skill-only"
+    if r.get("load"):
+        lines.append(
+            "- Loading: skill-only. The prompt holds SKILL.md only; SKILL.md and references/*.md are in a "
+            "temp folder the model can read with Read/Glob/Grep. References available: "
+            f"{', '.join(r['skill_references']) or 'none'}" if skill_only else
+            "- Loading: all. SKILL.md and every references/*.md are in the prompt; no tools.")
     if s["runs"]:
         lines += [
             f"- Expectations passed: {s['passed']}/{s['total']} ({s['pass_rate']:.0%}); "
@@ -378,16 +548,23 @@ def render_summary(r: dict) -> str:
             f"({s['answer_words']['min']:.0f} to {s['answer_words']['max']:.0f}); "
             f"answer time: mean {s['answer_seconds']['mean']:.0f}s",
         ]
+    if skill_only and s["runs"]:
+        lines.append(f"- References opened (runs that read each file): "
+                     f"{_refs_cell(s.get('references_opened') or {}, s['runs'])}")
     lines += [f"- Goldens caught (every key expectation FAILS): {s['goldens_caught']}/{s['goldens']}", ""]
     if r["evals"]:
+        refs_head = " References opened (runs) |" if skill_only else ""
         lines += ["## Per eval", "",
-                  "| Eval | Mean pass rate | Min to max | Runs fully passed | Mean words | Mean seconds | Mean output tokens |",
-                  "|---|---|---|---|---|---|---|"]
+                  "| Eval | Mean pass rate | Min to max | Runs fully passed | Mean words | Mean seconds | Mean output tokens |"
+                  + refs_head,
+                  "|---|---|---|---|---|---|---|" + ("---|" if skill_only else "")]
         for e in r["evals"]:
             pr = e["pass_rate"]
+            refs_col = f" {_refs_cell(e.get('references_opened') or {}, len(e['runs']))} |" if skill_only else ""
             lines.append(f"| {e['name']} | {pr['mean']:.0%} | {pr['min']:.0%} to {pr['max']:.0%} | "
                          f"{e['runs_all_passed']}/{len(e['runs'])} | {e['answer_words']['mean']:.0f} | "
-                         f"{e['answer_seconds']['mean']:.0f} | {e['answer_output_tokens']['mean']:.0f} |")
+                         f"{e['answer_seconds']['mean']:.0f} | {e['answer_output_tokens']['mean']:.0f} |"
+                         + refs_col)
         lines += ["", "## Per expectation", "",
                   "| Eval | # | Passed runs | Expectation | Evidence (run 1) |", "|---|---|---|---|---|"]
         for e in r["evals"]:
