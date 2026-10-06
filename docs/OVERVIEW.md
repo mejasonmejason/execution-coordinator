@@ -35,6 +35,7 @@ flowchart LR
   subgraph Hooks["hooks/: run by the agent harness"]
     H1["claude-stop-hook.sh<br/>Stop event"]
     H2["claude-merge-gate.sh<br/>PreToolUse on Bash"]
+    H3["session-start.sh<br/>SessionStart event"]
   end
   State[(".coordinator/status.json")]
   GH[("GitHub REST and GraphQL")]
@@ -46,10 +47,11 @@ flowchart LR
   S2 --> S3
   S1 <--> State
   H1 --> State
+  H3 --> State
   S2 -- "--key records verdict" --> State
   S2 --> GH
   S3 --> GH
-  T["tests/run.sh<br/>93 offline cases, stubbed gh"] -. tests .-> S1 & S2 & S3 & H1 & H2
+  T["tests/run.sh<br/>134 offline cases, stubbed gh"] -. tests .-> S1 & S2 & S3 & H1 & H2 & H3
 ```
 
 ## 2. The four operating layers
@@ -203,6 +205,23 @@ flowchart TD
   C -- "no" --> X["decision: block<br/>reason: Next action ... Do it now."]
 ```
 
+The SessionStart hook covers the other end: a new, resumed or compacted session. While the state is `active`, `waiting` or `human-gate`, it adds the state, next action and open dispatches as context, and says to read the skill and the ledger first. After `resume` or `compact` it also says to run the sweep first. When another session owns the status, it says not to take over. It never blocks, and it prints nothing when the state is `done` or there is no status.
+
+```mermaid
+flowchart TD
+  S0["Session starts, resumes,<br/>clears or compacts"] --> Z{"COORD_SESSION_START=0?"}
+  Z -- "yes" --> N0["No output"]
+  Z -- "no" --> F0{"status.json state is active,<br/>waiting or human-gate?"}
+  F0 -- "no" --> A0{"COORD_SESSION_START=always<br/>and no status?"}
+  A0 -- "yes" --> P0["One-line pointer to the skill"]
+  A0 -- "no" --> N0
+  F0 -- "yes" --> O0{"owner_session set and<br/>not this session?"}
+  O0 -- "yes" --> X0["Context: state, next action;<br/>another session owns it,<br/>do not take over, message the owner"]
+  O0 -- "no" --> R0{"source is resume<br/>or compact?"}
+  R0 -- "yes" --> W0["Context: state, next action, dispatches;<br/>read skill and ledger; run the sweep first"]
+  R0 -- "no" --> V0["Context: state, next action, dispatches;<br/>read skill and ledger"]
+```
+
 ## 7. Review-thread audit
 
 `pr-threads.sh` sorts every piece of review feedback into one of three rows. A reply counts as the agent's only when it carries `AGENT_MARKER` (default `🤖` or the Claude Code footer).
@@ -228,7 +247,7 @@ flowchart LR
     direction TB
     X1["SKILL.md rules"]
     X2["scripts/*.sh"]
-    X3["hooks/*.sh<br/>PreToolUse matcher Bash,<br/>Stop decision: block"]
+    X3["hooks/*.sh<br/>PreToolUse matcher Bash,<br/>Stop decision: block,<br/>SessionStart additionalContext"]
   end
   subgraph Claude["Claude Code"]
     direction TB

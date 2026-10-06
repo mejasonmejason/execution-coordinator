@@ -14,6 +14,7 @@ A skill for Claude and Codex that acts as a control tower for multi-PR engineeri
 | `scripts/status.sh` | Keeps a session's status, busy lease and dispatch records. |
 | `hooks/claude-merge-gate.sh` | PreToolUse hook for Claude Code and Codex. Blocks a merge unless `ready.sh` passes. |
 | `hooks/claude-stop-hook.sh` | Stop hook for Claude Code and Codex. Keeps the owning session working while its status is active. |
+| `hooks/session-start.sh` | SessionStart hook for Claude Code and Codex. While a coordination is in progress, it tells a new, resumed or compacted session the state and to read the skill and ledger first. Otherwise it prints nothing. |
 | `references/` | Detail that `SKILL.md` loads only when a task needs it. |
 | `evals/` | Model-behavior and trigger evals; see `evals/README.md`. |
 | `tests/run.sh` | Offline test suite. `gh` is replaced by a stub, so nothing touches GitHub. |
@@ -29,7 +30,7 @@ Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and 
 - **claude.ai:** download `execution-coordinator.zip` from the [latest release](../../releases/latest) and upload it on the Skills page in place of the current skill. claude.ai has no API for account skills, so this step stays manual.
 - **Claude Code:** copy the folder into `~/.claude/skills/` or into a repository's `.claude/skills/`.
 - **Codex:** copy the folder into `~/.agents/skills/` or into a repository's `.agents/skills/`. Start it with `$execution-coordinator`, or let Codex pick it from the description.
-- **Hooks (optional):** add the two hooks to `.claude/settings.json` (Claude Code) or `.codex/hooks.json` (Codex). Both use the same JSON entry; `references/keepalive.md` has it. Codex hooks are on by default (`[features] hooks = false` turns them off). Codex loads project hooks only when the project is trusted.
+- **Hooks (optional):** add the three hooks to `.claude/settings.json` (Claude Code) or `.codex/hooks.json` (Codex). Both use the same JSON entries; `references/keepalive.md` has them. Codex hooks are on by default (`[features] hooks = false` turns them off). Codex loads project hooks only when the project is trusted.
 
 ## Change
 
@@ -40,7 +41,7 @@ Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and 
 ## Test
 
 ```bash
-bash tests/run.sh   # 110 cases, offline; exit 0 when all pass
+bash tests/run.sh   # 134 cases, offline; exit 0 when all pass
 ```
 
 Run the suite before and after every change. A rule that a script can enforce gets a test case.

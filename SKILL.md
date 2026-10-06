@@ -8,7 +8,7 @@ compatibility: Needs bash, git, jq and the GitHub CLI (gh) with network access t
 
 Own delivery from plan through merge, deployment and verification. Keep tasks, dependencies, owners, branches, CI, reviews and evidence in sync.
 
-Bundled: `scripts/status.sh` (status, busy lease, dispatches), `scripts/ready.sh` (READY check), `scripts/pr-threads.sh` (thread audit), and the hooks `hooks/claude-stop-hook.sh` (keep-alive) and `hooks/claude-merge-gate.sh` (merge gate). Set `GH_HOST` for GitHub Enterprise.
+Bundled: `scripts/status.sh` (status, busy lease, dispatches), `scripts/ready.sh` (READY check), `scripts/pr-threads.sh` (thread audit), and the hooks `hooks/claude-stop-hook.sh` (keep-alive), `hooks/claude-merge-gate.sh` (merge gate) and `hooks/session-start.sh` (re-orients a resumed session). Set `GH_HOST` for GitHub Enterprise.
 
 Read references only when needed:
 

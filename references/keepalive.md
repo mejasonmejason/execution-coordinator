@@ -1,6 +1,6 @@
 # Keep-alive, status and reports
 
-Read this when you need the operating-layer detail, set or read a session's status, write a `human-gate` or a decision issue, set up the L2 sweeper, install the Stop or merge-gate hook, name sessions, find a second coordinator, write a status report, turn keep-alive off, or offboard a finished project.
+Read this when you need the operating-layer detail, set or read a session's status, write a `human-gate` or a decision issue, set up the L2 sweeper, install the SessionStart, Stop or merge-gate hook, name sessions, find a second coordinator, write a status report, turn keep-alive off, or offboard a finished project.
 
 ## Contents
 
@@ -81,6 +81,7 @@ Find and message the live coordinator instead of starting another coordinator or
 | Enforcer | Behavior |
 |---|---|
 | Claude Code or Codex Stop hook (`hooks/claude-stop-hook.sh`) | While the status is `active`, it blocks the stop and feeds back the next action. It releases the session after 8 blocks with no change to state, next action, HEAD or worktree. `status.sh set` resets the count. It skips a different owner only when both `owner_session` and the hook's `session_id` exist, so set `$CLAUDE_CODE_SESSION_ID` (Codex: `$CODEX_THREAD_ID`); the nearest agent process wins. A live busy lease makes it stand down. |
+| Claude Code or Codex SessionStart hook (`hooks/session-start.sh`) | While the status is `active`, `waiting` or `human-gate`, it re-orients a new, resumed or compacted session: state, next action, open dispatches, and read the skill and ledger first. It never blocks. |
 | L2 sweeper | Nudges idle `active` sessions, and `waiting` sessions whose recheck is due, through their terminal or a headless resume. |
 | Other harnesses | Use the harness's own continuation hook if it has one. Otherwise rely on the sweeper. |
 
@@ -103,6 +104,10 @@ Put this in `.claude/settings.json` (project) or `~/.claude/settings.json` (user
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume|clear|compact",
+        "hooks": [ { "type": "command", "command": "/path/to/execution-coordinator/hooks/session-start.sh" } ] }
+    ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "/path/to/execution-coordinator/hooks/claude-stop-hook.sh" } ] }
     ],
@@ -113,6 +118,8 @@ Put this in `.claude/settings.json` (project) or `~/.claude/settings.json` (user
   }
 }
 ```
+
+The SessionStart hook (`hooks/session-start.sh`) adds context only while `.coordinator/status.json` is `active`, `waiting` or `human-gate`. It gives the state, next action and open dispatches, and tells the session to read this skill and the ledger before it acts. After `resume` or `compact` it also says to run the sweep first. When `owner_session` names another session, it says not to take over and to message the owner. With no status or a `done` status it prints nothing, so other sessions pay no context cost. `COORD_SESSION_START=0` turns it off. `COORD_SESSION_START=always` also prints a one-line pointer to the skill when no status exists. A claude.ai/code cloud session loads hooks only from the repo's `.claude/settings.json`, so put the entry there and use a path inside the checkout.
 
 ## Quiet hours
 
@@ -137,6 +144,7 @@ Any one of these turns keep-alive off:
 
 - Set the status to `done`.
 - `export COORD_KEEPALIVE=0` (Stop hook only).
+- `export COORD_SESSION_START=0` (SessionStart hook only).
 - Remove the sweeper schedule.
 
 ## Status report template
