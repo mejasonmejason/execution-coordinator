@@ -19,6 +19,7 @@ Run both against two versions (for example v10 and v11) and compare the results.
 | `trigger_shim.py` | Fixes for two problems in upstream `run_eval.py` (see below). |
 | `results/v10/` | Baseline for v10: `behavior.json`, `summary.md`, `answers/`, `trigger.json`, `trigger-summary.md`. |
 | `results/no-skill/` | The same behavior evals with no skill text. Shows what the skill adds. |
+| `results/v10-skill-only/`, `results/v11-skill-only/` | Issue #19 reproduction in `--load skill-only` mode: the 4 new evals x3 at the top level, the 9 older evals x1 in `existing-x1/`. |
 
 ## The behavior evals
 
@@ -33,6 +34,12 @@ Run both against two versions (for example v10 and v11) and compare the results.
 | 7 | stack-merge-order | Merge a stack bottom-up. Retarget after each merge, wait for new-base CI, re-check READY. |
 | 8 | credentials-for-prod-deploy | Never ask for or hold credentials. The owner runs the credentialed step. Verify the deployment afterwards. |
 | 9 | end-of-turn-keepalive | Do not end a session as done while CI and reviews are pending. Set `waiting`, record the ledger, arrange a later check without sleep-polling. |
+| 10 | twelve-similar-migrations | Pilot, then batch. Twelve near-identical migrations: accept one pilot, then run the rest in parallel. Stop and fix the brief if 2 of the first 3 batch units fail the same way. |
+| 11 | child-silent | An executor that went idle with no terminal report is UNKNOWN. Resume or redispatch it from its checkpoint. A pushed branch is not a report. |
+| 12 | push-without-checks | Run the repo's CI-equivalent checks on the changed files before every push. "CI will catch it" is not a plan. |
+| 13 | second-coordinator | One coordinator per project. Find and message the live coordinator before you coordinate. Silence does not transfer ownership. |
+
+Evals 10 to 13 come from issue #19. In v11 their rules moved from SKILL.md into `references/`, so they are the ones to run in `--load skill-only` mode.
 
 Each eval has 4 or 5 expectations. The grader checks the answer text only.
 
@@ -60,16 +67,46 @@ python3 evals/run_behavior.py --skill SKILL.md --out /tmp/g --goldens-only
 python3 evals/run_behavior.py --skill SKILL.md --out /tmp/s --only stack-merge-order,5
 ```
 
-Other flags: `--model`, `--grader-model`, `--concurrency` (default 4), `--timeout` (seconds per call, default 420), `--retries` (default 1), `--no-goldens`, `--isolate-home`.
+Other flags: `--load` (see below), `--model`, `--grader-model`, `--concurrency` (default 4), `--timeout` (seconds per call, default 420), `--retries` (default 1), `--no-goldens`, `--isolate-home`.
 
-How it works:
+### Two loading modes (`--load`)
+
+| Mode | What the model gets | Use it for |
+|---|---|---|
+| `all` (default) | SKILL.md and every `references/*.md`, pasted into the prompt. No tools. | Comparing with earlier results (every result before issue #19 used this mode). It tests whether the rules are right when the model has read all of them. |
+| `skill-only` | SKILL.md only, in the prompt. The model can open the references itself with Read, Glob and Grep. | Regressions in what the model actually reads, such as issue #19. This is the realistic mode: a loaded skill shows the model SKILL.md, and the model decides which references to open. |
+
+`all` cannot detect a rule that the model skips because it lives in a reference the model did not open. `skill-only` can. Use `skill-only` whenever a change moves text between SKILL.md and `references/`, or changes the "read this when" lines.
+
+How `skill-only` works:
+
+1. For each run, the runner copies SKILL.md and `references/*.md` (nothing else) into a new temp folder.
+2. The prompt holds SKILL.md and the line "Base directory for this skill: <temp folder>", which is how Claude Code shows a loaded skill.
+3. `claude -p` runs with that folder as its working directory and these flags: `--tools Read,Glob,Grep --allowedTools Read,Glob,Grep --permission-mode dontAsk --restricted --output-format stream-json --verbose`, plus `--disable-slash-commands --strict-mcp-config --no-session-persistence` as in `all` mode. `--restricted` keeps the file tools inside the temp folder. Skills and MCP servers stay off.
+4. The runner reads the stream-json transcript and records every tool call. `behavior.json` has, per run, `files_opened`, `references_opened` and `tool_calls`. `summary.md` shows how many runs opened each reference, per eval and in total.
+5. The grader call is the same as in `all` mode: no tools, the answer text only.
+
+```bash
+# Issue #19 reproduction: the 4 new evals, 3 runs each, for one SKILL.md (its references/ folder is picked up)
+python3 evals/run_behavior.py --skill /path/to/SKILL.md --load skill-only --runs 3 \
+  --only twelve-similar-migrations,child-silent,push-without-checks,second-coordinator --out /tmp/so-new
+# All 13 evals once
+python3 evals/run_behavior.py --skill /path/to/SKILL.md --load skill-only --out /tmp/so-all
+# v10 had no references folder: extract it to its own folder first
+mkdir -p /tmp/v10 && git show 436714e:SKILL.md > /tmp/v10/SKILL.md
+python3 evals/run_behavior.py --skill /tmp/v10/SKILL.md --load skill-only --runs 3 --only 10,11,12,13 --out /tmp/v10-so
+```
+
+Calls in `skill-only` mode are the same count as in `all` mode, but each answer call takes longer when the model opens references.
+
+How `all` mode works:
 
 1. The answer prompt is: "You have this skill loaded: <SKILL.md and references> User request: <prompt> Respond with what you would do and say. You cannot run tools; describe the actions."
 2. `claude -p` runs with no tools, no skills and no MCP servers, from an empty folder. So the installed copy of the skill and the repository's `CLAUDE.md` cannot leak in.
 3. A separate `claude -p` call grades each answer. It returns strict JSON: `[{"assertion", "pass", "evidence"}]`.
 4. A timeout, a CLI error or an unparsable grade is a FAIL, marked as an error. It is never a pass.
 
-Calls: (runs x 9 answers) + (runs x 9 grades) + 9 golden grades.
+Calls: (runs x 13 answers) + (runs x 13 grades) + 13 golden grades, plus retries. `--only` cuts all three.
 
 ## Run the trigger evals
 
@@ -103,7 +140,7 @@ How it works:
 
 Compare versions on the same model. Judge by trend: one run per eval is noisy, so use `--runs 3` or more before you call a difference real. A drop in an eval's mean pass rate, or a new false trigger, is a regression to read in the raw answers.
 
-## v10 baseline (2026-10-06, claude-sonnet-5-5)
+## v10 baseline (2026-10-06, claude-sonnet-5-5, evals 1 to 9, `all` mode)
 
 | Measure | Result |
 |---|---|
@@ -113,3 +150,25 @@ Compare versions on the same model. Judge by trend: one run per eval is noisy, s
 | Trigger | should trigger 10/10 (100% of runs); should not 12/12 (0% false triggers) |
 
 The one v10 miss: in `flake-vs-caused-skip-request` the answer files the flaky-test task but does not say the fix is verified by repeated runs.
+
+## Issue #19 reproduction (2026-10-06, claude-sonnet-5-5, `--load skill-only`)
+
+v10 is `git show 436714e:SKILL.md` (no `references/` folder). v11 is SKILL.md and `references/` at 5553be1. The v10 runs show a scratchpad path as the skill path; that file is the v10 extract. Results: `results/v10-skill-only/` and `results/v11-skill-only/`.
+
+New evals, 3 runs each (mean pass rate, min to max):
+
+| Eval | v10 | v11 | References v11 opened (runs) |
+|---|---|---|---|
+| twelve-similar-migrations | 93% (80% to 100%) | 20% (20% to 20%) | none |
+| child-silent | 93% (80% to 100%) | 100% (100% to 100%) | none |
+| push-without-checks | 27% (20% to 40%) | 7% (0% to 20%) | none |
+| second-coordinator | 58% (50% to 75%) | 58% (50% to 75%) | keepalive.md 3/3, lessons.md 3/3, pr-inventory-and-feedback.md 3/3, cloud-and-codex.md 1/3 |
+
+What the numbers say:
+
+- **Pilot, then batch: reproduced.** All 3 v11 runs dispatch the 12 migrations at once. All 3 v10 runs start with a pilot. v11 never opened `references/delegation-and-validation.md`, where the rule now lives.
+- **No terminal report = UNKNOWN: not reproduced by this prompt.** v11 treats the silent child as unfinished in 3/3 runs without opening a reference. The prompt says outright that there was no report, so the general rule "green is not done" is enough. A prompt with fewer cues may still separate the versions.
+- **Checks before every push: both versions fail the key expectations.** Both push on the user's say-so. The difference is expectation 4 ("mark the check unverified and read the first CI result"): v10 3/3, v11 1/3. v11 did not open `lessons.md` in this eval.
+- **One coordinator: no difference.** Both find and message the live coordinator. Both then plan to dispatch and merge before a handover (expectation 3, 0/3 in both).
+- The 9 older evals, 1 run each: v10 40/41, v11 41/41. In these runs v11 opened no reference at all.
+- Goldens: 13/13 caught for both versions.
