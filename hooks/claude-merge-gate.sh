@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse merge gate for execution-coordinator.
-# Add to .claude/settings.json (project) or ~/.claude/settings.json (user):
+# PreToolUse merge gate for execution-coordinator. Works in Claude Code and Codex (same input and output format).
+# Claude Code: add to .claude/settings.json (project) or ~/.claude/settings.json (user).
+# Codex: add to .codex/hooks.json (project; the project must be trusted) or ~/.codex/hooks.json (user).
 #   { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command",
 #       "command": "/path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] } ] } }
 # On `gh pr merge` (not --disable-auto) or `gh api .../pulls/N/merge`, it resolves the PR and runs scripts/ready.sh

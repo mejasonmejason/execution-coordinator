@@ -1,4 +1,4 @@
-"""Check SKILL.md against the claude.ai skill upload rules. Exit 1 on any failure."""
+"""Check SKILL.md against the claude.ai and Codex skill rules, and agents/openai.yaml. Exit 1 on any failure."""
 import re
 import sys
 
@@ -24,6 +24,18 @@ if "<" in desc or ">" in desc:
     errors.append("description contains an angle bracket")
 if set(keys) - {"name", "description", "license", "allowed-tools", "metadata"}:
     errors.append(f"unexpected frontmatter keys: {keys}")
+
+# Codex metadata: agents/openai.yaml must carry the interface fields and name the skill in its default prompt.
+try:
+    oy = open("agents/openai.yaml", encoding="utf-8").read()
+except OSError:
+    oy = ""
+    errors.append("agents/openai.yaml is missing")
+for field in ("display_name", "short_description", "default_prompt"):
+    if oy and not re.search(rf"^\s+{field}:\s*\S", oy, re.M):
+        errors.append(f"agents/openai.yaml: interface.{field} is missing")
+if oy and f"${name}" not in oy:
+    errors.append(f"agents/openai.yaml: default_prompt does not name ${name}")
 
 for e in errors:
     print("ERROR", e)

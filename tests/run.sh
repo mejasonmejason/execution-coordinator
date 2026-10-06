@@ -15,7 +15,7 @@ hasnt() { if grep -qF -- "$2" <<<"$1"; then echo "FAIL $3 (unexpected '$2')"; fa
 export HOME; HOME=$(mktemp -d)
 R=$(mktemp -d); NR=$(mktemp -d); BIN=$(mktemp -d); export STUB_DIR; STUB_DIR=$(mktemp -d)
 trap 'rm -rf "$HOME" "$R" "$NR" "$BIN" "$STUB_DIR"' EXIT
-unset CLAUDE_CODE_SESSION_ID COORD_QUIET COORD_KEEPALIVE AGENT_SESSION_NAME GH_HOST
+unset CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID COORD_QUIET COORD_KEEPALIVE AGENT_SESSION_NAME GH_HOST
 cd "$R" && git init -q && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
 sj() { jq -r "$1" "$R/.coordinator/status.json"; }
 
@@ -86,6 +86,9 @@ CLAUDE_CODE_SESSION_ID=sessA "$st" set active "do thing" --busy 30 >/dev/null; t
 [ -n "$(sj '.busy_until // ""')" ]; t $? 0 "busy_until recorded"
 t "$(sj .owner_session)" sessA "owner_session from CLAUDE_CODE_SESSION_ID"
 "$st" set active "x" --busy soon >/dev/null 2>&1; t $? 2 "--busy rejects non-numbers"
+CODEX_THREAD_ID=thrX "$st" set active "do thing" >/dev/null; t "$(sj .owner_session)" thrX "owner_session from CODEX_THREAD_ID (Codex)"
+CLAUDE_CODE_SESSION_ID=sessA CODEX_THREAD_ID=thrX "$st" set active "do thing" >/dev/null
+t "$(sj .owner_session)" sessA "CLAUDE_CODE_SESSION_ID wins when both are set"
 
 # ---- stop hook -----------------------------------------------------------------------------------------------
 stop() { jq -n --arg c "$R" --arg s "$1" '{cwd:$c, session_id:$s}' | "$hook"; }
@@ -94,6 +97,13 @@ CLAUDE_CODE_SESSION_ID=sessA "$st" set active "do thing" --busy 0 >/dev/null
 t "$(sj '.busy_until // "none"')" none "--busy 0 clears the lease"
 t "$(stop sessB)" "" "stop hook passes for a different session_id"
 t "$(stop sessA | jq -r .decision)" block "stop hook blocks the owner session when active"
+# Codex sends extra Stop fields (hook_event_name, turn_id, model, stop_hook_active); the decision must not change.
+cstop() { jq -n --arg c "$R" --arg s "$1" '{cwd:$c, session_id:$s, hook_event_name:"Stop", turn_id:"t1", model:"gpt",
+  permission_mode:"default", transcript_path:null, stop_hook_active:true}' | "$hook"; }
+CODEX_THREAD_ID=thrX "$st" set active "do thing" >/dev/null
+t "$(cstop thrX | jq -r .decision)" block "stop hook blocks the Codex owner thread"
+t "$(cstop thrY)" "" "stop hook passes for a different Codex thread"
+CLAUDE_CODE_SESSION_ID=sessA "$st" set active "do thing" >/dev/null
 CLAUDE_CODE_SESSION_ID=sessA "$st" set active "do thing" --busy 5 >/dev/null
 "$st" set active "keep" >/dev/null
 [ -n "$(sj '.busy_until // ""')" ]; t $? 0 "set without --busy keeps a live lease"
@@ -205,6 +215,9 @@ setj pr.json '.mergeable_state = "dirty"'
 g "gh pr merge $U --squash" "$R"; t $? 2 "gate: NOT READY PR blocked"
 has "$(cat "$BIN/gate.err")" "merge conflicts with base" "gate: reason on stderr"
 g "echo hi; gh api -X PUT repos/o/r/pulls/7/merge" "$R"; t $? 2 "gate: REST merge call checked"
+jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{session_id:"thrX", hook_event_name:"PreToolUse", tool_name:"Bash",
+  turn_id:"t1", model:"gpt", permission_mode:"default", tool_input:{command:$c}, cwd:$d}' | "$gate" 2>/dev/null
+t $? 2 "gate: Codex-shaped PreToolUse input is blocked too"
 fixtures; echo '[]' > "$STUB_DIR/files.json"; setj runs.json '.check_runs[0].status = "queued"'
 g "gh pr merge $U --squash" "$R"; t $? 2 "gate: pending required check blocks a direct merge"
 g "gh pr merge $U --auto --squash" "$R"; t $? 0 "gate: --auto allows pending checks"
