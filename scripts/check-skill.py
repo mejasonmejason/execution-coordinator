@@ -1,7 +1,7 @@
 """Check SKILL.md, references/ and agents/openai.yaml against the claude.ai and Codex skill rules, and the README
 test count against the real suite. Dependency-free. Exit 1 on any failure.
 
-The repository root is the parent of .github/, so the checker gives the same result from any directory.
+The repository root is the parent of scripts/, so the checker gives the same result from any directory.
 Set CHECK_SKILL_TOTAL=N to supply the assertion count instead of running tests/run.sh (the golden tests do this,
 because tests/run.sh runs them and the two would otherwise call each other).
 """
@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def path(*p):
