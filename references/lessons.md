@@ -4,7 +4,7 @@ Read this on every nudge or resume, and before you change this skill, its script
 
 ## Test every code-checkable lesson
 
-Every lesson that code can check needs an offline, fixture-backed `gh` case in `tests/run.sh`. Run the suite before and after every change to the skill, scripts or hooks, because a lesson without a test comes back.
+Every lesson that code can check needs an offline, fixture-backed `gh` case in `tests/run.sh`. The suite must pass before and after every change to the skill, scripts or hooks, because a lesson without a test comes back.
 
 ## Resume-time checks
 

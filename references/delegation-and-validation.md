@@ -1,6 +1,6 @@
-# Placement, acceptance review, validation and deployment
+# Delegation, placement, acceptance review and validation
 
-Read this when you decide whether work runs locally or on a hosted agent, before and during heavy local work, when you run an acceptance review, when you validate UI or deployments, or when you set up a scheduled sweeper.
+Read this when you choose how to delegate, decide whether work runs locally or on a hosted agent, run heavy local work, change tests, run an acceptance review, or validate UI or deployments.
 
 ## Contents
 
@@ -11,7 +11,6 @@ Read this when you decide whether work runs locally or on a hosted agent, before
 - Acceptance review in detail
 - Test integrity
 - Validate behavior, not only builds
-- The L2 sweeper
 
 ## Delegation choices
 
@@ -105,16 +104,3 @@ For web work, run real browser or Playwright journeys. Label mocks as mocks. A m
 - On a post-merge or post-deploy failure, record the commit range, isolate the culprit and create an owned fix task.
 - For demo videos, pace them and inspect them before attaching them to the PR. Mark superseded videos stale. State what each video proves.
 - Demo-only data and omitted dependencies cannot prove the real paths. Open a task for each validation gap.
-
-## The L2 sweeper
-
-Run one sweeper per project; it acts as the project's one logical owner. It is a scheduled headless CLI run or a GitHub Actions `on: schedule` workflow. Each run reads the skill, the ledger and the backlog, runs the sweep from SKILL.md, nudges idle owners as the keep-alive protocol says, and syncs the ledger mirror. It respects `--busy` leases and never overlaps a previous run, because two sweeps would make conflicting writes.
-
-
-```bash
-# crontab -e: weekdays every 10 min, 08:00–18:59
-*/10 8-18 * * 1-5  cd ~/src/project && claude -p "Read execution-coordinator and ledger; run the sweep; respect busy leases; nudge idle owners per the keep-alive protocol; sync mirror." >> .coordinator/sweep.log 2>&1
-# Codex: same line with  codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true "Use \$execution-coordinator ..."
-```
-
-Other headless CLIs work too. Record every schedule in the ledger, and remove it when the project closes.

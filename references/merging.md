@@ -18,12 +18,11 @@ Read this when you run `scripts/ready.sh` or the merge gate and need the detail,
 
 - Trunk has required status checks and required reviews. CODEOWNERS routes reviews.
 - Use the merge queue when the repo has one. Otherwise use `gh pr merge --auto --squash` (or the repo's method) once merge authority is recorded.
-- A hosted `@mention` fix agent (for example the Claude Code GitHub Action or Copilot) owns its own pushes. Local and cloud agents run `git pull --ff-only` before pushing, and never push while the bot works, because the two pushes collide.
 - On a stack, auto-merge and fix bots run only on the bottom PR. Restacks and merges stay with the stack owner.
 
 ## What `scripts/ready.sh` checks
 
-`scripts/ready.sh <pr-url> --sha <reported head> [--key <dispatch>] [--paths "a/**,b"]` uses REST where GraphQL is refused.
+`scripts/ready.sh <pr-url> --sha <reported head> [--key <dispatch>] [--paths "a/**,b"]` uses REST throughout; its owed-reply audit falls back to REST where GraphQL is refused.
 
 It blocks on:
 
@@ -70,7 +69,7 @@ Merge stacks bottom-up. After each merge, retarget or restack the next PR onto t
 
 ## Merge-queue failures
 
-When batch checks fail, isolate the culprit by queue bisection or subset runs. Requeue the passing PRs and retest them on the new base. Incident, security and unblocker PRs may jump the queue; record why. The checks themselves never change to let a batch through.
+When batch checks fail, isolate the culprit by queue bisection or subset runs. Requeue the passing PRs and retest them on the new base. Incident, security and unblocker PRs may jump the queue; record why. The checks never change, including for PRs that jump the queue.
 
 ## Post-merge and queue checks
 
@@ -83,6 +82,5 @@ When batch checks fail, isolate the culprit by queue bisection or subset runs. R
 
 ## Remote writes
 
-- Read back every configuration or launch change (job or session name, model, advisor, hook), because fields can drop silently.
 - Make writes idempotent: use stable IDs and check before you write, because a retried write must not apply twice.
 - Before a cross-system change that can partly commit, record the repair steps.

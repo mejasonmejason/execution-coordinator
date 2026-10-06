@@ -25,7 +25,7 @@ flowchart LR
     R5["events and sweep"]
     R6["status and replies"]
   end
-  Refs["references/*.md<br/>detail read only when needed:<br/>cloud and Codex, keep-alive, routing,<br/>validation, stacks, lessons"]
+  Refs["references/*.md<br/>detail read only when needed:<br/>cloud and Codex, keep-alive,<br/>PR inventory and feedback,<br/>delegation and validation,<br/>merging, lessons"]
   Rules -. "read when" .-> Refs
   subgraph Scripts["scripts/: checks a program can run"]
     S1["status.sh<br/>status, busy lease, dispatches"]

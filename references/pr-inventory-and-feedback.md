@@ -1,4 +1,4 @@
-# Inventory, routing and PR replies
+# PR inventory, routing and feedback
 
 Read this when you discover the open PR portfolio (at start and on every sweep), read one PR's deep state, send a message to a PR's owner, follow a PR feedback procedure, refute a bot finding, audit review comments, or post a reply on a PR.
 
@@ -90,7 +90,7 @@ Run `scripts/pr-threads.sh <pr-url> [...]` before PR reports, READY, handoffs an
 
 | Row | Meaning | What to do |
 |---|---|---|
-| ACTION | Nobody replied after the last comment | Fix it, reply with evidence, or ask a named human. |
+| ACTION | An unresolved thread, PR comment or review summary with no agent reply after it | Fix it, reply with evidence, or ask a named human. |
 | AWAITING | Unresolved, and the agent replied last | Not done; wait for the reviewer. |
 | UNSENT | Your own PENDING review, which nobody else can see | Publish it or delete it. |
 

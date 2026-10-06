@@ -1,6 +1,6 @@
 # Keep-alive, status and reports
 
-Read this when you need the operating-layer detail, set or read a session's status, write a `human-gate` or a decision issue, install the Stop or merge-gate hook, name sessions, find a second coordinator, write a status report, turn keep-alive off, or offboard a finished project.
+Read this when you need the operating-layer detail, set or read a session's status, write a `human-gate` or a decision issue, set up the L2 sweeper, install the Stop or merge-gate hook, name sessions, find a second coordinator, write a status report, turn keep-alive off, or offboard a finished project.
 
 ## Contents
 
@@ -10,6 +10,7 @@ Read this when you need the operating-layer detail, set or read a session's stat
 - Decision issues
 - One coordinator per project
 - Enforcers
+- The L2 sweeper
 - Install the hooks
 - Quiet hours
 - Session names
@@ -82,6 +83,18 @@ Find and message the live coordinator instead of starting another coordinator or
 | Claude Code or Codex Stop hook (`hooks/claude-stop-hook.sh`) | While the status is `active`, it blocks the stop and feeds back the next action. It releases the session after 8 blocks with no change to state, next action, HEAD or worktree. `status.sh set` resets the count. It skips a different owner only when both `owner_session` and the hook's `session_id` exist, so set `$CLAUDE_CODE_SESSION_ID` (Codex: `$CODEX_THREAD_ID`); the nearest agent process wins. A live busy lease makes it stand down. |
 | L2 sweeper | Nudges idle `active` sessions, and `waiting` sessions whose recheck is due, through their terminal or a headless resume. |
 | Other harnesses | Use the harness's own continuation hook if it has one. Otherwise rely on the sweeper. |
+
+## The L2 sweeper
+
+Run one sweeper per project; it acts as the project's one logical owner. It is a scheduled headless CLI run or a GitHub Actions `on: schedule` workflow. Each run reads the skill, the ledger and the backlog, runs the sweep from SKILL.md, nudges idle owners as the keep-alive protocol says, and syncs the ledger mirror. It respects `--busy` leases and never overlaps a previous run, because two sweeps would make conflicting writes.
+
+```bash
+# crontab -e: weekdays every 10 min, 08:00–18:59
+*/10 8-18 * * 1-5  cd ~/src/project && claude -p "Read execution-coordinator and ledger; run the sweep; respect busy leases; nudge idle owners per the keep-alive protocol; sync mirror." >> .coordinator/sweep.log 2>&1
+# Codex: same line with  codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true "Use \$execution-coordinator ..."
+```
+
+Other headless CLIs work too. Record every schedule in the ledger, and remove it when the project closes.
 
 ## Install the hooks
 
