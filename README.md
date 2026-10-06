@@ -19,13 +19,13 @@ A skill for Claude and Codex that acts as a control tower for multi-PR engineeri
 | `evals/` | Model-behavior and trigger evals; see `evals/README.md`. |
 | `tests/run.sh` | Offline test suite. `gh` is replaced by a stub, so nothing touches GitHub. |
 | `docs/OVERVIEW.md` | Diagrams of the whole skill. GitHub draws them from Mermaid. |
-| `tests/check-skill-goldens.sh` | Negative tests for `.github/scripts/check-skill.py`. Each bad input must fail the check. |
-| `.github/scripts/check-skill.py` | Upload and drift checks: frontmatter, size budget, `references/` links, `agents/openai.yaml`, README test count. |
+| `tests/check-skill-goldens.sh` | Negative tests for `scripts/check-skill.py`. Each bad input must fail the check. |
+| `scripts/check-skill.py` | Upload and drift checks: frontmatter, size budget, `references/` links, `agents/openai.yaml`, README test count. |
 | `agents/openai.yaml` | Codex display name, short description and default prompt. |
 
 ## Release and install
 
-Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and the upload checks, builds `execution-coordinator.zip`, and publishes it as a GitHub Release with its sha256.
+Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and the upload checks, unpacks a test build of the zip and runs the suite from it, builds `execution-coordinator.zip`, and publishes it as a GitHub Release with its sha256.
 
 - **claude.ai:** download `execution-coordinator.zip` from the [latest release](../../releases/latest) and upload it on the Skills page in place of the current skill. claude.ai has no API for account skills, so this step stays manual.
 - **Claude Code:** copy the folder into `~/.claude/skills/` or into a repository's `.claude/skills/`.
