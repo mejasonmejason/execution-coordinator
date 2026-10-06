@@ -28,6 +28,7 @@ session_id() {
   local pid=$PPID comm i
   for i in $(seq 1 30); do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || break
+    comm=${comm##*/}  # macOS prints the full path, Linux the bare name
     case "$comm" in
       codex*) [ -n "${CODEX_THREAD_ID:-}" ] && { echo "$CODEX_THREAD_ID"; return; }; break;;
       claude*) [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && { echo "$CLAUDE_CODE_SESSION_ID"; return; }; break;;
