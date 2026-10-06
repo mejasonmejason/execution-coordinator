@@ -6,7 +6,7 @@
 #       "command": "/path/to/execution-coordinator/hooks/session-start.sh" } ] } ] } }
 # When <git root>/.coordinator/status.json says active, waiting or human-gate, the hook adds a short context note:
 # the state, next action, dispatches, and the instruction to read the skill and the ledger before acting. After
-# resume or compact it also says to run the sweep first. When owner_session is set and differs from this session_id,
+# resume or compact it also says to run the sweep first. When owner_session is set and this session_id differs or is empty,
 # the note says another session owns the coordination and this session must not take over or write the status.
 # With no status, or state done, it prints nothing, so the skill costs no context in other sessions.
 # Off: export COORD_SESSION_START=0. COORD_SESSION_START=always also prints a one-line pointer to the skill when

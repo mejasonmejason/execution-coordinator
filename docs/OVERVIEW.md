@@ -215,7 +215,7 @@ flowchart TD
   F0 -- "no" --> A0{"COORD_SESSION_START=always<br/>and no status?"}
   A0 -- "yes" --> P0["One-line pointer to the skill"]
   A0 -- "no" --> N0
-  F0 -- "yes" --> O0{"owner_session set and<br/>not this session?"}
+  F0 -- "yes" --> O0{"owner_session set and<br/>not this session,<br/>or session id empty?"}
   O0 -- "yes" --> X0["Context: state, next action;<br/>another session owns it,<br/>do not take over, message the owner"]
   O0 -- "no" --> R0{"source is resume<br/>or compact?"}
   R0 -- "yes" --> W0["Context: state, next action, dispatches;<br/>read skill and ledger; run the sweep first"]
