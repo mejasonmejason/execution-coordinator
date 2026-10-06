@@ -198,7 +198,7 @@ rm "$STUB_DIR/threads.json"
 STUB_NO_GRAPHQL=1 "$pt" "$U" >/dev/null 2>&1; t $? 3 "threads: a failed REST fallback is unreadable (exit 3)"
 fixtures; restfx; out=$(COORD_THREADS_REST=1 "$pt" "$U"); has "$out" "ACTION    thread by alex" "threads: COORD_THREADS_REST=1 forces REST"
 # Notice patterns: a quota notice from a review bot is INFO, never ACTION (issue #13)
-QN="You have reached your Codex usage limits for code reviews. To continue, add credits."
+QN="You have reached your Codex usage limits for code reviews."
 cm() { echo "[{\"author\":{\"login\":\"$1\"},\"body\":$(jq -Rn --arg b "$2" '$b'),\"url\":\"n1\",\"createdAt\":\"2026-01-01T00:00:00Z\"}]"; }
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$QN")"
 out=$("$pt" "$U"); rc=$?
@@ -262,6 +262,50 @@ has "$out" "INFO      notice by chatgpt-codex-connector: r2" "anchor: the real q
 setj graphql.json ".data.repository.pullRequest.reviews.nodes = [] | .data.repository.pullRequest.comments.nodes = $(cm 'acme-bot' $'Build quota low\nplease look')"
 out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota" "$pt" "$U"); t $? 1 "anchor: a custom pattern must cover the whole body"
 out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota(?s:.*)" "$pt" "$U"); t $? 0 "anchor: a custom pattern with a trailing wildcard accepts the rest"
+# default-regex literal sentences: injected prose is ACTION, the real body and the bare first sentence stay INFO
+L1='You have reached your Codex usage limits for code reviews.'
+L2='You can see your limits in the [Codex usage dashboard](https://chatgpt.com/codex/cloud/settings/usage).'
+L3='To continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your [settings](https://chatgpt.com/codex/cloud/settings/code-review).'
+inj() { fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$1")"; out=$("$pt" "$U"); echo $?; }
+t "$(inj "$L1")" 0 "literal: the bare first sentence is INFO"
+t "$(inj "$L1"$'\n'"$L2")" 0 "literal: first two sentences are INFO"
+t "$(inj "$L1 To continue using code reviews, the auth check in login is missing and tokens leak.")" 1 "literal: prose after 'To continue using code reviews,' is ACTION"
+t "$(inj "$L1 To continue, the auth check in login is missing and tokens leak.")" 1 "literal: prose after 'To continue,' is ACTION"
+t "$(inj "$L1 You can see your limits in the [auth check in login leaks tokens](https://x.io/u).")" 1 "literal: a finding inside the link text is ACTION"
+t "$(inj "$L1 You can see your limits in the [dashboard](https://x.io/auth-check-in-login-leaks-tokens).")" 1 "literal: a finding inside the link URL is ACTION"
+t "$(inj "$L1 You can see your limits in the [dash"$'\n'"board](https://x.io/u).")" 1 "literal: link text across a newline is ACTION"
+t "$(inj "$L1 You can see your limits in the [d](https://x.io/a b).")" 1 "literal: whitespace inside the link URL is ACTION"
+t "$(inj "$L1 $L2"$'\n'"$L3")" 0 "literal: the real body is INFO"
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
+jq -n --arg b "$L1" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n7",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 0 "literal: REST fallback bare first sentence is INFO"
+has "$out" "INFO      notice by chatgpt-codex-connector[bot]: n7" "literal: REST fallback bare first sentence is reported INFO"
+jq -n --arg b "$L1 To continue using code reviews, the auth check in login is missing and tokens leak." '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n8",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "literal: REST fallback injected prose is ACTION"
+has "$out" "ACTION    PR comment by chatgpt-codex-connector[bot]: n8" "literal: REST fallback injected prose is reported ACTION"
+# an empty, whitespace-only or pullRequest-less response is unreadable (exit 3), never OK, never READY
+for body in '' '   
+  ' '{"data":{"repository":{"pullRequest":null}}}' '{"data":{"viewer":{"login":"me"}}}' '{}'; do
+  fixtures; printf '%s' "$body" > "$STUB_DIR/graphql.json"
+  out=$("$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "empty: response '$(printf %s "$body" | tr -d '\n ' | head -c 40)' exits 3"
+  hasnt "$out" "OK " "empty: response '$(printf %s "$body" | tr -d '\n ' | head -c 40)' never prints OK"
+  out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "empty: ready.sh is not READY on response '$(printf %s "$body" | tr -d '\n ' | head -c 40)'"
+done
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"; : > "$STUB_DIR/user.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U" 2>&1); t $? 3 "empty: REST fallback with an empty user response exits 3"
+hasnt "$out" "OK " "empty: REST fallback empty response never prints OK"
+# a wildcard login with a match-all regex fails closed; a notice-only wildcard still works
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'P1: real bug in auth')"
+for wc in '*:.*' '*:.+' '*:(?s:.*)'; do
+  out=$(COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "wildcard: COORD_NOTICE_PATTERNS='$wc' exits 3"
+  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: '$wc' names the wildcard in the ERROR line"
+  hasnt "$out" "INFO" "wildcard: '$wc' never turns a comment into INFO"
+done
+setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'Build quota low')"
+out=$(COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 0 "wildcard: '*:build quota.*' still works"
+has "$out" "INFO      notice by alex" "wildcard: '*:build quota.*' still reports INFO"
 # a broken COORD_NOTICE_PATTERNS fails closed: exit 3 with an ERROR line, never OK and never READY
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' 'P1: this loop never exits')"
 out=$(COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$pt" "$U" 2>&1); rc=$?
