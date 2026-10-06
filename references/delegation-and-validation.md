@@ -1,10 +1,11 @@
 # Delegation, placement, acceptance review and validation
 
-Read this when you choose how to delegate, decide whether work runs locally or on a hosted agent, run heavy local work, change tests, run an acceptance review, or validate UI or deployments.
+You must read this before any dispatch (repeated units above all), before you record a dispatch, decide whether work runs locally or on a hosted agent, run heavy local work, change tests, write an acceptance review, or validate UI or deployments.
 
 ## Contents
 
 - Delegation choices
+- Record a dispatch
 - Local or hosted
 - Memory check
 - Hosted briefs
@@ -14,9 +15,8 @@ Read this when you choose how to delegate, decide whether work runs locally or o
 
 ## Delegation choices
 
-These complement the fan-out rules in SKILL.md.
+These complement the fan-out rules in SKILL.md, which hold the pilot-then-batch rule.
 
-- **Pilot, then batch.** For repeated units (migrations, codemods, changes across N repos), accept one pilot before starting parallel work. If 2 of the first 3 batch units fail the same way, stop, fix the brief and resume. Accept each unit separately. This is a progress check, not a cap on parallel work.
 - **Model routing.** Use the lowest capable tier. Upgrade under the two-failed-attempts rule.
 - **High-stakes workers.** Consult a stronger advisor before choosing an approach, after repeated errors, and before reporting done.
 - **Drift checks.** Use a read-only scout or advisor to check long-running writers for drift from the brief.
@@ -24,6 +24,18 @@ These complement the fan-out rules in SKILL.md.
 - **Do not delegate** edits under 5 minutes, work that needs live context, or a second watcher on a PR, because the handoff costs more than the work.
 - **Visible sessions.** Use a visible session when the user wants to watch, when work runs over about an hour, or when it must outlive this session.
 - **Repo rule files.** Keep AGENTS.md and CLAUDE.md as scoped repo or package rules with exact test commands, protected paths and links, not pasted docs.
+- **Brief fan-out.** State the expected fan-out: one agent for a fact or small fix, several for independent changes, more for broad work.
+
+## Record a dispatch
+
+Run these from the coordinator repo:
+
+```bash
+scripts/status.sh dispatch <key> --worktree W --paths "a/**,b/**" [--run-id R] [--pr URL]
+scripts/status.sh dispatch <key> --state awaiting-acceptance --pr <url>   # on reported completion
+```
+
+The first form records the branch and the worktree `HEAD` as `base_sha`. `ready.sh --key` reads the PR, owned paths and base from this record, so set `--pr` before acceptance. A passing `ready.sh --key` run stores a local verdict, and `status.sh` refuses `--state accepted` without it.
 
 ## Local or hosted
 
@@ -66,7 +78,7 @@ Record the run ID or URL on the task and the ledger. Send fixes to the same run 
 
 ## Acceptance review in detail
 
-The acceptance criteria and the risk floor are in SKILL.md. This is how the review runs.
+The acceptance criteria and the risk floor are in SKILL.md. This is how the review runs. It is manual: `scripts/ready.sh` does not run it.
 
 - Reviewers work on the target repo without write tools, because a reviewer that can edit stops being independent.
 - They verify each citation at the reviewed head with nearby quotes, and cover every file in the diff.
@@ -75,7 +87,6 @@ The acceptance criteria and the risk floor are in SKILL.md. This is how the revi
 - For registries, routes, schemas, proto, flags, DI wiring or generated code, check every required sibling before READY, because a missing sibling breaks at runtime, not in review.
 - In monorepos, validate the affected dependency-graph targets and record missing coverage.
 - Before dispatch, check the acceptance criteria blind, against the original request only, so the criteria test what was asked rather than what was built.
-- With no terminal report from the executor, the state is UNKNOWN. Resume or redispatch.
 - In fix rounds, review the delta since the last reviewed head (READY records it). Do one full `base_sha..head` review before acceptance.
 - After a stack or batch lands, review the combined cross-PR interfaces and shared files before the project is complete.
 

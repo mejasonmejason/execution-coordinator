@@ -1,6 +1,6 @@
 # PR inventory, routing and feedback
 
-Read this when you discover the open PR portfolio (at start and on every sweep), read one PR's deep state, send a message to a PR's owner, follow a PR feedback procedure, refute a bot finding, audit review comments, or post a reply on a PR.
+You must read this before you discover the open PR portfolio (at start and on every sweep), read one PR's deep state, send a message to a PR's owner, follow a PR feedback procedure, refute a bot finding, audit review comments, or post a reply on a PR.
 
 ## Contents
 

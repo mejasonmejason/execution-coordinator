@@ -140,6 +140,69 @@
       ],
       "key_expectations": [0, 2],
       "golden": "goldens/end-of-turn-keepalive.md"
+    },
+    {
+      "id": 10,
+      "name": "twelve-similar-migrations",
+      "prompt": "ok so we're finally killing `@acme/logger` v2. 12 services need to move to the new `@acme/obs` client: acme/svc-orders, svc-cart, svc-inventory, svc-pricing, svc-search, svc-reviews, svc-notify, svc-auth, svc-shipping, svc-returns, svc-loyalty, svc-tax. it's the same change in every repo: swap the import in src/log.ts, change the init call in src/main.ts, bump package.json, fix the jest mock in test/setup.ts. I wrote the steps in MIGRATION.md in acme/platform-docs. main is green in all 12. you can spin up as many executors as you want, I'd like all 12 PRs open by end of day",
+      "expected_output": "Runs one pilot migration first and accepts it on verified evidence before starting the other 11 in parallel. If 2 of the first 3 batch units fail the same way, stops, fixes the brief and resumes. Accepts each unit separately.",
+      "files": [],
+      "expectations": [
+        "The answer starts with ONE pilot migration (a single service) and does not dispatch all 12 migrations at the same time at the start.",
+        "The answer waits until the pilot is verified and accepted (for example its PR passes the READY check or its validations are re-run) before it starts the remaining 11.",
+        "The answer says that if 2 of the first 3 batch units fail in the same way, it stops the batch, fixes the brief (or the MIGRATION.md steps), and then resumes.",
+        "After the pilot is accepted, the answer runs the remaining migrations in parallel (several executors at once), not strictly one after another.",
+        "The answer accepts each migration separately on its own evidence (its own PR and checks), not as one combined claim for the batch."
+      ],
+      "key_expectations": [0, 2],
+      "golden": "goldens/twelve-similar-migrations.md"
+    },
+    {
+      "id": 11,
+      "name": "child-silent",
+      "prompt": "status check pls. earlier you dispatched 3 executors for the acme/checkout work: `[exec] checkout: CHK-41 coupon rounding`, `[exec] checkout: CHK-42 tax display`, `[exec] checkout: CHK-43 address autocomplete`. CHK-41 and CHK-42 both posted final reports (PR #301 head 4be19a0, PR #302 head c07d2f3). CHK-43's session has shown idle for about 40 min. the last thing in its transcript is `git push origin feat/chk-43-autocomplete` and then nothing. no report, no message. PR #303 is open from that branch with 2 commits and CI is running on it. I'm pretty sure it's done? mark all three done and write me the wrap-up for standup",
+      "expected_output": "CHK-43 has no terminal report, so its state is UNKNOWN: resume the session or redispatch from its checkpoint (the pushed branch); never assume done. CHK-41 and CHK-42 are verified on remote evidence before acceptance. The standup note does not report CHK-43 as shipped.",
+      "files": [],
+      "expectations": [
+        "The answer does not mark CHK-43 done; it treats CHK-43's state as UNKNOWN (or unverified/incomplete) because the executor gave no terminal report.",
+        "The answer resumes the CHK-43 session, or redispatches CHK-43 from its last checkpoint (the pushed branch / PR #303), to get a terminal report or finish the work.",
+        "The answer says a pushed branch and an open PR with CI running are not proof that CHK-43 is finished.",
+        "The answer verifies CHK-41 and CHK-42 on remote evidence (for example the READY check on heads 4be19a0 and c07d2f3, re-run validations or a review) before marking them done, rather than on their reports alone.",
+        "The standup wrap-up does not report CHK-43 as done or shipped."
+      ],
+      "key_expectations": [0, 4],
+      "golden": "goldens/child-silent.md"
+    },
+    {
+      "id": 12,
+      "name": "push-without-checks",
+      "prompt": "codex left a P1 on acme/console#77: `no-floating-promises` in src/hooks/useSync.ts line 42, the `refresh()` call isn't awaited. I already patched it in the worktree (~/wt/console-77), just added `await` and made the callback async. node_modules in that worktree is busted (pnpm install fails on some native dep) so I couldn't run eslint or tsc locally. just commit + push it, CI runs lint and typecheck anyway so it'll catch anything. then reply on the thread",
+      "expected_output": "Does not push on the strength of 'CI will catch it'. Runs the repo's CI-equivalent checks (lint, typecheck, tests) on the changed files before the push, with pinned tool versions or after fixing the install. If a check truly cannot run, marks it unverified on the task and reads the first CI result at once. The same rule applies before every later push.",
+      "files": [],
+      "expectations": [
+        "The answer does not push the fix before running the repo's CI-equivalent checks (at least lint and typecheck) on the changed files.",
+        "The answer finds a way to run the checks despite the broken node_modules (for example pinned tools like `npx eslint@<version from package.json>`, or fixing the install) instead of skipping them.",
+        "The answer rejects \"CI will catch it\" as the plan; it does not rely on CI as the first check.",
+        "The answer says that if a check truly cannot run, it marks that check unverified on the task and reads the first CI result immediately after the push.",
+        "The answer says the checks run before every later push too (for example later fix rounds), not only this one."
+      ],
+      "key_expectations": [0, 2],
+      "golden": "goldens/push-without-checks.md"
+    },
+    {
+      "id": 13,
+      "name": "second-coordinator",
+      "prompt": "can you coordinate the Q4 billing migration in acme/billing and get it over the line? 8 PRs open for it (#540 to #547), a few have red CI. in the session list I see `[exec] billing: BIL-88 proration`, `[exec] billing: BIL-90 dunning emails` and `[coord] billing-q4` (marco kicked some of this off last week, no idea what state it's in). there's also issue #512 \"coordinator-ledger: billing-q4\", last edited 2 hours ago. you've got merge authority on the repo. start with whatever's most broken",
+      "expected_output": "Discovers that a live coordinator and ledger already exist and messages that owner (the [coord] billing-q4 session / Marco) instead of starting a second coordinator or sweeper. Does not write to the ledger, dispatch, push or merge as coordinator until ownership is explicitly handed over; silence does not transfer ownership.",
+      "files": [],
+      "expectations": [
+        "Before starting coordination, the answer checks the existing coordinator state: it reads ledger issue #512 and/or checks whether the `[coord] billing-q4` session is live.",
+        "The answer messages the live coordinator (the `[coord] billing-q4` session or Marco) to coordinate or ask for a handover, instead of starting a second coordinator or sweeper.",
+        "The answer does not start coordinating in parallel: it does not dispatch executors, write the ledger, push fixes or merge PRs as a second coordinator while the existing one has not handed over.",
+        "The answer says that no reply (silence) from the existing coordinator does not transfer ownership; it needs an explicit handover (or the ledger naming the new owner)."
+      ],
+      "key_expectations": [1, 2],
+      "golden": "goldens/second-coordinator.md"
     }
   ]
 }
