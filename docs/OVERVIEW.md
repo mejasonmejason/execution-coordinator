@@ -51,7 +51,7 @@ flowchart LR
   S2 -- "--key records verdict" --> State
   S2 --> GH
   S3 --> GH
-  T["tests/run.sh<br/>134 offline cases, stubbed gh"] -. tests .-> S1 & S2 & S3 & H1 & H2 & H3
+  T["tests/run.sh<br/>offline cases, stubbed gh"] -. tests .-> S1 & S2 & S3 & H1 & H2 & H3
 ```
 
 ## 2. The four operating layers
@@ -224,13 +224,15 @@ flowchart TD
 
 ## 7. Review-thread audit
 
-`pr-threads.sh` sorts every piece of review feedback into one of three rows. A reply counts as the agent's only when it carries `AGENT_MARKER` (default `🤖` or the Claude Code footer).
+`pr-threads.sh` sorts every piece of review feedback into one of four categories: `ACTION`, `AWAITING`, `UNSENT` or `INFO`. It skips resolved threads. `INFO` marks a bot notice that needs no reply, such as a spent review quota (`COORD_NOTICE_PATTERNS`); it is listed but never blocks READY. A reply counts as the agent's only when it carries `AGENT_MARKER` (default `🤖` or the Claude Code footer).
 
 ```mermaid
 flowchart TD
   I["Review thread, PR comment<br/>or review summary"] --> U{"Your own pending review<br/>with draft comments?"}
   U -- "yes" --> UN["UNSENT<br/>publish or delete it"]
-  U -- "no" --> RS{"Thread resolved?"}
+  U -- "no" --> N{"PR comment or review summary<br/>that matches a bot-notice pattern?"}
+  N -- "yes" --> IN["INFO<br/>notice, no reply needed,<br/>never blocks READY"]
+  N -- "no" --> RS{"Thread resolved?"}
   RS -- "yes" --> SK["skipped"]
   RS -- "no" --> AR{"Agent-marked reply<br/>after the last comment?"}
   AR -- "no" --> AC["ACTION<br/>fix, evidence reply,<br/>or named human question"]
