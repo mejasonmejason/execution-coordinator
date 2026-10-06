@@ -2,7 +2,7 @@
 # Coordinator eval suite: sandbox tests for the shipped scripts and hooks. Offline: `gh` is replaced by a stub that
 # serves fixture JSON, so nothing touches GitHub. Runs in throwaway git repos with a throwaway $HOME.
 #   tests/run.sh          exit 0 when every case passes, 1 otherwise
-# Every lesson in SKILL.md §14 that a script can enforce gets a regression case here.
+# Every lesson in references/lessons.md that a script can enforce gets a regression case here.
 set -u
 
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

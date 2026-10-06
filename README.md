@@ -29,7 +29,7 @@ Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and 
 - **claude.ai:** download `execution-coordinator.zip` from the [latest release](../../releases/latest) and upload it on the Skills page in place of the current skill. claude.ai has no API for account skills, so this step stays manual.
 - **Claude Code:** copy the folder into `~/.claude/skills/` or into a repository's `.claude/skills/`.
 - **Codex:** copy the folder into `~/.agents/skills/` or into a repository's `.agents/skills/`. Start it with `$execution-coordinator`, or let Codex pick it from the description.
-- **Hooks (optional):** add the two hooks to `.claude/settings.json` (Claude Code) or `.codex/hooks.json` (Codex). Both use the same JSON entry; `SKILL.md` section 8a has it. Codex hooks are on by default (`[features] hooks = false` turns them off). Codex loads project hooks only when the project is trusted.
+- **Hooks (optional):** add the two hooks to `.claude/settings.json` (Claude Code) or `.codex/hooks.json` (Codex). Both use the same JSON entry; `references/keepalive.md` has it. Codex hooks are on by default (`[features] hooks = false` turns them off). Codex loads project hooks only when the project is trusted.
 
 ## Change
 
