@@ -1,0 +1,224 @@
+{
+  "skill_name": "execution-coordinator",
+  "description": "Coordinate engineering from plan through merge, deployment and verification using parallel agents, sessions, PR stacks, CI, reviews, public tools and bundled scripts, in Claude Code (including cloud sessions) or Codex. Use for execution, agent coordination, PR/stack completion, task tracking or sustained progress.",
+  "results": [
+    {
+      "query": "I've got 6 open PRs across acme/api and acme/web for the billing migration (#311 through #316). #313-#315 are stacked, two have failing CI, and codex left comments on most of them. can you take over and drive all of them to merged? you have merge authority, I'm in meetings till 4",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "spin up parallel agents for issues #88, #91, #95 and #102 in our pnpm monorepo, each in its own worktree and branch, and keep going until they're all merged and deployed to staging",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "Coordinate the rollout of the new auth service. The plan is in docs/auth-plan.md: 5 phases, one PR each, phase 3 depends on 1 and 2, phase 5 needs a prod deploy. Track it, dispatch executors, keep a ledger issue updated, and tell me only when you need a decision.",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "my stack for the search rewrite (#101 <- #102 <- #103 <- #104) has to land today. restack after each merge, babysit CI on all four, answer the review threads, merge bottom up",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "I'm offline from friday night till monday. set things up so the open PRs under the payments-v2 epic keep getting swept: reassign stuck executors, merge whatever is actually ready, only ping me for real decisions",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "there are three claude code cloud sessions working on the data pipeline refactor and I lost track of who is doing what. figure out the state of each session and its PR, archive the finished ones, and get the rest of the work over the line",
+      "should_trigger": true,
+      "trigger_rate": 0.6666666666666666,
+      "triggers": 2,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "We need to move 40 Go services from logrus to slog. Do one service as a pilot, then fan the rest out in batches across agents, one PR per service, and merge each as it passes CI and review.",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "codex is working on #450 and #451 and a claude session has #452. be the control tower: watch reviews and CI on all three, route feedback to whoever owns each PR, and merge when they are really ready, not just green",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "take the Q4 tech-debt list in issue #700 (12 checkbox items), turn each into a task, run the independent ones in parallel worktrees, and get everything through review and merged by friday",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "prod went red after we merged #220 to #224 this morning. find which PR broke it, get a fix PR up (or coordinate a revert), make sure the other open PRs don't merge on top of the breakage, and verify prod is healthy afterwards",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "fix the off-by-one in src/utils/paginate.ts (page 2 repeats the last item of page 1) and open a PR for it",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "can you explain what scripts/ready.sh does in this repo? especially how the --paths glob matching works, I don't get the ** vs * difference",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "write one unit test for parse_invoice_date in billing/dates.py that covers the DST spring-forward edge case (2026-03-08 02:30 America/New_York)",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "review PR #318 for style only: naming, comments, formatting. don't push anything, just leave review comments",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "set up GitHub Actions CI from scratch for this python repo: ruff, mypy and pytest on 3.11 and 3.12, cache pip, fail on coverage under 80%",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "what's the actual difference between a GitHub merge queue and auto-merge? which one should a 5-person team with one required check use?",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "my PR #77 has a merge conflict in package-lock.json after main moved. what's the cleanest way to resolve it?",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "summarize the review comments on PR #412 in 3 bullets, I just want to know what people are complaining about",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "write me a git alias that rebases my current branch onto origin/main and then force-pushes with lease",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "add a CODEOWNERS file so anything under services/payments/ needs review from @acme/payments-team and docs/ needs @acme/docs",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "can you keep a running todo list of what's left on my thesis code refactor (just me, one repo, no PRs yet) and tick things off as we go? first item: rename utils/old_io.py to io_helpers.py and fix the imports",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    },
+    {
+      "query": "keep going on the flaky websocket reconnect bug in client/ws.ts until client/ws.test.ts passes 20 times in a row. don't stop to ask me, just keep at it",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "pass": true,
+      "timeouts": 0
+    }
+  ],
+  "summary": {
+    "total": 22,
+    "passed": 22,
+    "inconclusive": 0,
+    "failed": 0
+  },
+  "meta": {
+    "skill_md": "/tmp/claude-0/v10skill/SKILL.md",
+    "skill_sha256": "d5072fb5b9c4b40d8b4a1767111bc00b451a498af96f8d9dc8850dfa0af4efce",
+    "started_utc": "2026-10-06T18:01:26Z",
+    "seconds": 46,
+    "model": "claude-sonnet-5-5",
+    "runs_per_query": 3,
+    "claude_calls": 66,
+    "inconclusive_queries": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "should_trigger_hit_rate": 0.967,
+    "should_not_false_trigger_rate": 0.0
+  }
+}
