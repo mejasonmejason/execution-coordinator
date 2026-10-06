@@ -7,8 +7,9 @@
 #       [--worktree DIR] [--paths "a/**,b/*.ts"] [--branch B] [--base-sha S] [--run-id R] [--pr URL] [--note T]
 # Writes <git root>/.coordinator/status.json (git-ignored). Refuses $HOME and non-git directories.
 # --busy N sets busy_until N minutes ahead (0 clears): the Stop hook and the sweeper stand down until then.
-# owner_session is taken from $CLAUDE_CODE_SESSION_ID (Claude Code), else $CODEX_THREAD_ID (Codex), when set;
-# the Stop hook only blocks that session.
+# owner_session is the session id of the nearest claude or codex ancestor process ($CLAUDE_CODE_SESSION_ID or
+# $CODEX_THREAD_ID), because a child inherits its parent's variable. $COORD_SESSION_ID overrides it. The Stop hook
+# only blocks that session.
 # A new dispatch records base_sha (HEAD of its worktree) and branch. `--state accepted` is refused unless
 # `ready.sh --key <key>` has recorded a passing READY check for that dispatch.
 set -euo pipefail
@@ -20,6 +21,22 @@ dir="$root/.coordinator"
 file="$dir/status.json"
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Session id of the agent that runs this script. The nearest claude or codex ancestor decides which variable is
+# its own; the other one can be inherited from a parent agent. With no such ancestor, Claude's id comes first.
+session_id() {
+  [ -n "${COORD_SESSION_ID:-}" ] && { echo "$COORD_SESSION_ID"; return; }
+  local pid=$PPID comm i
+  for i in $(seq 1 30); do
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || break
+    case "$comm" in
+      codex*) [ -n "${CODEX_THREAD_ID:-}" ] && { echo "$CODEX_THREAD_ID"; return; }; break;;
+      claude*) [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && { echo "$CLAUDE_CODE_SESSION_ID"; return; }; break;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ "${pid:-0}" -gt 1 ] || break
+  done
+  echo "${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}"
+}
 current() { if [ -f "$file" ]; then cat "$file"; else echo '{}'; fi; }
 # Atomic write: jq program and args, applied to the current file.
 write() {
@@ -50,7 +67,7 @@ case "${1:-}" in
     [ -z "$busy" ] || [[ "$busy" =~ ^[0-9]+$ ]] || { echo "status.sh: --busy takes whole minutes (0 clears)" >&2; exit 2; }
     head=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo none)
     write --arg s "$state" --arg n "$next" --argjson r "$recheck" --arg h "$head" \
-          --arg o "${AGENT_SESSION_NAME:-}" --arg os "${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}" --arg t "$now" --arg b "$busy" '
+          --arg o "${AGENT_SESSION_NAME:-}" --arg os "$(session_id)" --arg t "$now" --arg b "$busy" '
       . + {state:$s, next_action:$n, recheck_minutes:$r, head:$h, owner:$o, updated_at:$t}
       | if $os != "" then .owner_session = $os else del(.owner_session) end
       | if $b == "" then . elif ($b|tonumber) > 0 then .busy_until = (now + ($b|tonumber) * 60 | floor | todate) else del(.busy_until) end

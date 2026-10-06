@@ -58,12 +58,13 @@ Operating principles:
 
 | Need | Codex |
 |---|---|
-| Start executor | `codex exec --sandbox workspace-write "<brief>"`; hosted: `codex cloud exec --env <env> "<brief>"` |
+| Start executor | `codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true "<brief>"`; hosted: `codex cloud exec --env <env> "<brief>"` |
 | Send event, resume | `codex exec resume <session-id> "<message>"` |
 | Read results | `codex exec --json` (one JSON event per line) |
-| Network | the `workspace-write` sandbox blocks network, and `gh` needs it: add `-c sandbox_workspace_write.network_access=true` |
-| Hooks | `.codex/hooks.json` (trusted project) or `~/.codex/hooks.json`, same entries as §8a |
-| Session id | `$CODEX_THREAD_ID`; `scripts/status.sh` records it as `owner_session` |
+| Network | the `workspace-write` sandbox blocks network; `gh` and `git push` need the `network_access=true` setting above |
+| Hooks | `.codex/hooks.json` (trusted project) or `~/.codex/hooks.json`, same entries as §8a; on by default |
+| Session id | `$CODEX_THREAD_ID`; `scripts/status.sh` records the id of the nearest `claude` or `codex` process (`$COORD_SESSION_ID` overrides) |
+| Reply marker | Codex adds no footer: post replies with §9's `AGENT_MARKER` so `scripts/pr-threads.sh` sees them |
 | Repo rules | `AGENTS.md` |
 
 Rules for `send_message`:
@@ -313,7 +314,7 @@ Enforcers:
 
 | Enforcer | Behavior |
 |---|---|
-| Claude Code or Codex Stop hook (`hooks/claude-stop-hook.sh`) | `active`: blocks with next action; releases after 8 unchanged blocks (state/action/HEAD/worktree). `status.sh set` resets count. Skips different owners only if both `owner_session` and hook `session_id` exist; set `$CLAUDE_CODE_SESSION_ID` (Codex: `$CODEX_THREAD_ID`). Live busy lease stands down. |
+| Claude Code or Codex Stop hook (`hooks/claude-stop-hook.sh`) | `active`: blocks with next action; releases after 8 unchanged blocks (state/action/HEAD/worktree). `status.sh set` resets count. Skips different owners only if both `owner_session` and hook `session_id` exist; set `$CLAUDE_CODE_SESSION_ID` (Codex: `$CODEX_THREAD_ID`; nearest agent process wins). Live busy lease stands down. |
 | L2 sweeper (§8) | Nudges idle `active` sessions, and `waiting` sessions whose recheck is due, through their terminal or a headless resume. |
 | Other harnesses | Use the harness's own continuation hook if it has one; otherwise rely on the sweeper. |
 

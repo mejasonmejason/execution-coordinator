@@ -7,7 +7,7 @@
 # When <git root>/.coordinator/status.json says "active", the hook blocks the stop and feeds back the
 # next action. It gives up after 8 stops with no change to state, next action, HEAD, or working tree.
 # It never blocks a different session: when the status records owner_session (set by scripts/status.sh from
-# $CLAUDE_CODE_SESSION_ID or $CODEX_THREAD_ID) and this hook's session_id differs, the stop goes through. It also stands down while
+# the nearest claude or codex process) and this hook's session_id differs, the stop goes through. It also stands down while
 # busy_until (status.sh set ... --busy N) is in the future.
 # Off: export COORD_KEEPALIVE=0. Quiet hours: export COORD_QUIET="00-07" (local hours, start-end).
 set -uo pipefail

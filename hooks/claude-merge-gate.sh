@@ -14,7 +14,8 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ready="$here/../scripts/ready.sh"
 input=$(cat)
-command=$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)
+# Claude Code and Codex send a string; an argv array is joined so the parser still sees `gh pr merge`.
+command=$(jq -r '.tool_input.command // empty | if type == "array" then join(" ") else . end' <<<"$input" 2>/dev/null)
 cwd=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)
 [ -n "$cwd" ] && [ -d "$cwd" ] || cwd=$PWD
 [ -n "$command" ] || exit 0

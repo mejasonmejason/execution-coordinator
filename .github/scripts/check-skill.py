@@ -31,11 +31,16 @@ try:
 except OSError:
     oy = ""
     errors.append("agents/openai.yaml is missing")
+block = re.search(r"^interface:[ \t]*\n((?:[ \t]+.*\n?|[ \t]*\n)*)", oy, re.M)
+iface = block.group(1) if block else ""
+if oy and not block:
+    errors.append("agents/openai.yaml: no top-level interface: block")
+fields = dict(re.findall(r"^[ \t]+([\w-]+):[ \t]*(.*)$", iface, re.M))
 for field in ("display_name", "short_description", "default_prompt"):
-    if oy and not re.search(rf"^\s+{field}:\s*\S", oy, re.M):
+    if block and not fields.get(field, "").strip(' "'):
         errors.append(f"agents/openai.yaml: interface.{field} is missing")
-if oy and f"${name}" not in oy:
-    errors.append(f"agents/openai.yaml: default_prompt does not name ${name}")
+if block and f"${name}" not in fields.get("default_prompt", ""):
+    errors.append(f"agents/openai.yaml: interface.default_prompt does not name ${name}")
 
 for e in errors:
     print("ERROR", e)
