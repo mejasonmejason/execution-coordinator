@@ -35,7 +35,7 @@ scripts/status.sh dispatch <key> --worktree W --paths "a/**,b/**" [--run-id R] [
 scripts/status.sh dispatch <key> --state awaiting-acceptance --pr <url>   # on reported completion
 ```
 
-The first form records the branch and the worktree `HEAD` as `base_sha`. `ready.sh --key` reads the PR, owned paths and base from this record, so set `--pr` before acceptance. A passing `ready.sh --key` run stores a local verdict, and `status.sh` refuses `--state accepted` without it.
+The first form records the branch and the worktree `HEAD` as `base_sha`. `ready.sh --key` reads the PR, owned paths and base from this record, so set `--pr` before acceptance. A `ready.sh --key` run stores a local verdict bound to that dispatch key, the PR, its head, the `--paths` scope, the run id and the `--allow-pending` flag. `status.sh` refuses `--state accepted` (exit 4) unless that verdict passed with no blockers, was not taken with `--allow-pending`, matches the current PR, paths and run, and its head is the PR's current head. A merged PR still matches the head it merged at; a PR closed without merging is refused. A change to `--pr`, `--paths` or `--run-id` clears the verdict. Equivalent PR forms and a reordered path list do not. Every `ready.sh --key` run first records `ok=false`, and any exit 3 leaves it there, so an old pass never survives a failed or interrupted check. Once a dispatch is `accepted`, later updates such as `--note` skip the gate, `ready.sh --key` keeps its verdict, and a `--pr`, `--paths` or `--run-id` change is refused unless `--state` moves it out of `accepted`.
 
 ## Local or hosted
 

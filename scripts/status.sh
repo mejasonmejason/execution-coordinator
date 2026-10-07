@@ -10,10 +10,15 @@
 # owner_session is the session id of the nearest claude or codex ancestor process ($CLAUDE_CODE_SESSION_ID or
 # $CODEX_THREAD_ID), because a child inherits its parent's variable. $COORD_SESSION_ID overrides it. The Stop hook
 # only blocks that session.
-# A new dispatch records base_sha (HEAD of its worktree) and branch. `--state accepted` is refused unless
-# `ready.sh --key <key>` has recorded a passing READY check for that dispatch, without --allow-pending, on its
-# current pr, paths and run_id, and on the PR's current head (read with gh). Changing pr, paths or run_id
-# clears the verdict.
+# A new dispatch records base_sha (HEAD of its worktree) and branch. The move into `--state accepted` is refused
+# (exit 4) unless `ready.sh --key <key>` recorded a clean READY verdict for this key: ok, no blockers, not
+# --allow-pending, on the dispatch's current pr, paths and run_id, and on the PR's current head. status.sh reads
+# that head with one REST call (`gh api repos/O/R/pulls/N`) and also refuses a PR closed without merging.
+# A pr, paths or run_id change clears the verdict. PR forms (URL, owner/repo#N) and path order are normalized
+# first. --branch, --worktree, --base-sha and --note never clear it. On an accepted dispatch the gate does not
+# run again, and pr, paths and run_id changes are refused unless --state moves it out of accepted.
+# Writes hold a lock directory (.coordinator/.lock). A dispatch update that finds the record changed since it
+# read it exits 5 ("dispatch changed; retry"). COORD_LOCK_TRIES sets the lock wait in 0.1s tries (default 100).
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "status.sh: not inside a git repository" >&2; exit 2; }
@@ -41,12 +46,29 @@ session_id() {
   echo "${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}"
 }
 current() { if [ -f "$file" ]; then cat "$file"; else echo '{}'; fi; }
-# Atomic write: jq program and args, applied to the current file.
+# Portable lock (mkdir is atomic; no flock on macOS). A lock whose holder pid is dead is cleared.
+lock() {
+  local i pid
+  for i in $(seq 1 "${COORD_LOCK_TRIES:-100}"); do
+    if mkdir "$dir/.lock" 2>/dev/null; then echo $$ > "$dir/.lock/pid"; trap unlock EXIT; return 0; fi
+    pid=$(cat "$dir/.lock/pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && [ "$(cat "$dir/.lock/pid" 2>/dev/null)" = "$pid" ]; then
+      rm -rf "$dir/.lock"; continue
+    fi
+    sleep 0.1
+  done
+  echo "status.sh: $dir/.lock is held${pid:+ by pid $pid}; retry (remove it only if that process is gone)" >&2
+  return 1
+}
+unlock() { rm -rf "$dir/.lock"; trap - EXIT; }
+# Atomic write under the lock: jq program and args, applied to the current file.
 write() {
   mkdir -p "$dir"
   [ -f "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore"
+  lock || return 1
   local tmp; tmp=$(mktemp "$dir/.status.XXXXXX")
-  if current | jq "$@" > "$tmp"; then mv "$tmp" "$file"; else rm -f "$tmp"; return 1; fi
+  if current | jq "$@" > "$tmp" 2> "$tmp.err"; then mv "$tmp" "$file"; rm -f "$tmp.err"; unlock; return 0; fi
+  sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; rm -f "$tmp" "$tmp.err"; unlock; return 2
 }
 need() { [ "$1" -ge 2 ] || { echo "status.sh: $2 needs a value" >&2; exit 2; }; }
 
@@ -104,8 +126,14 @@ case "${1:-}" in
       [ -n "$base" ] || base=$(git -C "$gitdir" rev-parse HEAD 2>/dev/null || true)
       [ -n "$branch" ] || branch=$(git -C "$gitdir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     fi
+    # bind: what a READY verdict covers. PR forms normalize to "host owner repo number"; paths compare as a set.
+    lib='def prkey: if type != "string" then null else ascii_downcase
+           | ([capture("^(https?://)?(?<h>[^/]+)/(?<o>[^/]+)/(?<r>[^/]+)/pull/(?<n>[0-9]+)([/?#].*)?$")]
+              + [capture("^((?<h>[^/\\s]+\\.[^/\\s]+)/)?(?<o>[^/#\\s]+)/(?<r>[^/#\\s]+)#(?<n>[0-9]+)$")])[0]
+           | if . == null then null else "\(.h // $gh) \(.o) \(.r) \(.n)" end end;
+         def bind: [(.pr | prkey), ((.paths // []) | unique), (.run_id // null)];'
     rec=$(jq -c --arg st "$dstate" --arg wt "$wt" --arg p "$paths" --arg br "$branch" --arg bs "$base" \
-          --arg run "$run" --arg pr "$pr" --arg note "$note" --arg t "$now" '
+          --arg run "$run" --arg pr "$pr" --arg note "$note" --arg t "$now" --arg gh "${GH_HOST:-github.com}" "$lib"'
       (. // {state:"running", dispatched_at:$t}) as $old
       | ($old
           + (if $st != "" then {state:$st} else {} end)
@@ -117,31 +145,39 @@ case "${1:-}" in
           + (if $pr != "" then {pr:$pr} else {} end)
           + (if $note != "" then {note:$note} else {} end)
           + {updated_at:$t})
-      # A READY verdict covers one PR, scope and run. Changing any of them clears it.
-      | if [.pr, .paths, .run_id] != [$old.pr, $old.paths, $old.run_id] then del(.ready) else . end' <<<"${prev:-null}")
-    if [ "$(jq -r .state <<<"$rec")" = "accepted" ]; then
-      refuse() { echo "status.sh: refusing: dispatch \"$key\" $*; run scripts/ready.sh --key $key first" >&2; exit 4; }
-      # owner/repo#N or a PR URL -> host owner repo number (the same forms ready.sh takes).
-      prparts() {
-        if [[ "$1" =~ ^https?://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
-          echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]} ${BASH_REMATCH[4]}"
-        elif [[ "$1" =~ ^(([^/[:space:]]+\.[^/[:space:]]+)/)?([^/#[:space:]]+)/([^/#[:space:]]+)#([0-9]+)$ ]]; then
-          echo "${BASH_REMATCH[2]:-${GH_HOST:-github.com}} ${BASH_REMATCH[3]} ${BASH_REMATCH[4]} ${BASH_REMATCH[5]}"
-        fi
-      }
-      [ "$(jq -r '.ready.ok // false' <<<"$rec")" = "true" ] || refuse "has no passing READY check"
-      [ "$(jq -r '.ready.allow_pending // false' <<<"$rec")" = "false" ] || refuse "READY passed only with --allow-pending"
-      [ "$(jq -r '[(.paths // []), .run_id] == [(.ready.paths // []), .ready.run]' <<<"$rec")" = "true" ] \
-        || refuse "READY checked another --paths scope or run"
-      want=$(prparts "$(jq -r '.pr // empty' <<<"$rec")"); got=$(prparts "$(jq -r '.ready.pr // empty' <<<"$rec")")
-      [ -n "$want" ] && [ "$want" = "$got" ] || refuse "READY checked another PR than the dispatch PR"
-      read -r h o r n <<<"$want"
-      # A merged PR keeps its last head in head.sha, so this also binds a verdict taken before the merge.
-      cur=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n" --jq '.head.sha' 2>/dev/null) || cur=""
-      [ -n "$cur" ] || refuse "PR head is unreadable, so the READY head cannot be confirmed"
-      [ "$cur" = "$(jq -r '.ready.head // empty' <<<"$rec")" ] || refuse "PR head moved to ${cur:0:9} after READY"
+      | if bind == ($old | bind) then . elif $old.state == "accepted" and .state == "accepted" then error("rebind")
+        else del(.ready) end' <<<"${prev:-null}" 2>/dev/null) || {
+      echo "status.sh: refusing: dispatch \"$key\" is accepted; move it out of accepted with --state before changing pr, paths or run_id" >&2
+      exit 4; }
+    if [ "$(jq -r .state <<<"$rec")" = "accepted" ] && [ "$(jq -r '.state // ""' <<<"$pj")" != "accepted" ]; then
+      refuse() { echo "status.sh: refusing: dispatch \"$key\" $*" >&2; exit 4; }
+      rerun="; run scripts/ready.sh --key $key first"
+      why=$(jq -r --arg k "$key" --arg gh "${GH_HOST:-github.com}" "$lib"'
+        .ready as $v
+        | if ($v | type) != "object" or $v.ok != true then "has no passing READY check"
+          elif $v.unreadable == true or $v.in_progress == true then "has a READY check that did not finish"
+          elif $v.allow_pending != false then "has a READY verdict that does not rule out --allow-pending"
+          elif $v.blockers != [] then "has a READY verdict with blockers"
+          elif $v.key != $k then "has a READY verdict recorded for another dispatch"
+          elif (.pr | prkey) == null then "has no PR"
+          elif bind != [($v.pr | prkey), (($v.paths // []) | unique), ($v.run // null)]
+            then "has a READY verdict for another PR, --paths scope or run"
+          else "" end' <<<"$rec")
+      [ -z "$why" ] || refuse "$why$rerun"
+      read -r h o r n <<<"$(jq -r --arg gh "${GH_HOST:-github.com}" "$lib"' .pr | prkey' <<<"$rec")"
+      # One REST read. A merged PR keeps its last head in head.sha, so a verdict taken before the merge still binds.
+      cur=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n" --jq '"\(.head.sha) \(.state) \(.merged)"' 2>/dev/null) || cur=""
+      read -r csha cstate cmerged <<<"$cur"
+      [[ "${csha:-}" =~ ^[0-9a-f]{40}$ ]] \
+        || refuse "cannot confirm the PR head: gh could not read $h/$o/$r#$n; fix gh access (auth, host or network) and retry"
+      [ "$cstate" != "closed" ] || [ "$cmerged" = "true" ] || refuse "PR is closed without merging"
+      [ "$csha" = "$(jq -r '.ready.head' <<<"$rec")" ] || refuse "PR head moved to ${csha:0:9} after READY$rerun"
     fi
-    write --arg k "$key" --argjson rec "$rec" '.dispatches = (.dispatches // {}) | .dispatches[$k] = $rec'
+    # Compare-and-swap: write only if the record is still the one read above.
+    write --arg k "$key" --argjson prev "${prev:-null}" --argjson rec "$rec" '
+      if (.dispatches[$k] // null) != $prev then error("dispatch changed; retry (\"\($k)\" was updated while this ran)")
+      else . end
+      | .dispatches = (.dispatches // {}) | .dispatches[$k] = $rec' || { rc=$?; [ "$rc" -eq 2 ] && exit 5; exit 1; }
     jq -r --arg k "$key" '.dispatches[$k] | "dispatch \($k): \(.state)\(if .base_sha then " base \(.base_sha[0:9])" else "" end)"' "$file"
     ;;
   *)
