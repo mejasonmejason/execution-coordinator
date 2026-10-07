@@ -121,7 +121,7 @@ stateDiagram-v2
 
 ## 5. The merge gate
 
-The gate runs before every shell command. It finds `gh pr merge` and REST merge calls, runs `ready.sh` on the current head, and blocks the command when the fence is not met. It fails closed: a merge it cannot place is blocked.
+The gate runs before every shell command. It finds `gh pr merge` and REST merge calls, runs `ready.sh` on the current head, and blocks the command when the fence is not met. It fails closed: a merge it cannot place is blocked. It checks a merge only when the merge is its own top-level command. Nested forms, `command`/`time`/`sudo` prefixes and merge text inside the arguments of another command are blocked, and no override applies to them.
 
 ```mermaid
 sequenceDiagram
