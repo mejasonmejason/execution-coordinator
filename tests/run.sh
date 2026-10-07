@@ -436,6 +436,38 @@ g "env -u FOO --unset=BAR -C /tmp --chdir=/tmp COORD_READY_OVERRIDE=\"env opts o
 grep -q "env opts ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: override after env -u/-C logged"
 gr "env -S x COORD_READY_OVERRIDE=\"split no\" gh pr merge $U" "override after env -S (not honored)"
 grep -q "split no" "$R/.coordinator/overrides.log"; t $? 1 "gate: override after env -S not logged"
+# PR #41 second review.
+gr "gh pr merge $U # it's ready
+echo 'x' --disable-auto" "a merge with an apostrophe in a comment after it"
+gr "# don't merge early
+gh pr merge $U
+echo 'done'" "a merge after a comment with an apostrophe"
+gr "gh pr merge $U --subject --disable-auto" "--disable-auto as the value of --subject"
+g "echo --disable-auto; bash -c \"gh pr merge $U\"" "$R"; t $? 2 "gate: --disable-auto elsewhere does not exempt a quoted merge"
+g "gh pr merge 5 --disable-auto; bash -c \"gh pr merge 6\"" "$R"; t $? 2 "gate: a quoted merge next to a parsed merge fails closed"
+g "\$(echo gh) pr merge 5 --disable-auto; bash -c \"gh pr merge 6\"" "$R"; t $? 2 "gate: a quoted merge next to a substituted merge fails closed"
+g "gh pr merge $U --body 'see gh pr merge 4'" "$R"; t $? 2 "gate: merge text inside --body fails closed"
+has "$(cat "$BIN/gate.err")" "--body-file" "gate: merge text inside --body suggests --body-file"
+gr "gh pr mer\\
+ge $U" "a backslash-newline inside merge"
+gr "gh pr merge -A a@b.c $U --squash" "gh pr merge -A <email> <url>"
+STUB_PRVIEW=1 gr "gh pr merge --squash 2>&1" "gh pr merge --squash 2>&1 (redirection is not the PR)"
+STUB_PRVIEW=1 gr "gh pr merge --squash > /tmp/out.txt" "gh pr merge --squash > file"
+long=""; for _ in $(seq 600); do long+="gh -x pr -x "; done
+out=$(timeout 30 bash -c 'jq -n --arg c "$1" --arg d "$2" "{tool_input:{command:\$c}, cwd:\$d}" | "$3" 2>/dev/null; echo $?' _ "$long" "$R" "$gate")
+t "$out" 0 "gate: 600 repeats of gh -x pr -x finish in time"
+out=$(timeout 30 bash -c 'jq -n --arg c "$1 merge $2" --arg d "$3" "{tool_input:{command:\$c}, cwd:\$d}" | "$4" 2>/dev/null; echo $?' _ "$long" "$U" "$R" "$gate")
+t "$out" 2 "gate: 600 repeats of gh -x pr -x then merge finish in time and fail closed"
+fixtures; echo '[]' > "$STUB_DIR/files.json"; setj runs.json '.check_runs[0].status = "queued"'
+g "gh pr merge $U --subject --auto" "$R"; t $? 2 "gate: --auto as the value of --subject does not allow pending checks"
+# PR #41 Codex review at 8054d11: every merge in one command, and no override across a substitution.
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+g "echo \$(gh pr merge $U) \$(gh pr merge 9)" "$R"; t $? 2 "gate: the second merge in one command is checked"
+has "$(cat "$BIN/gate.err")" "could not resolve" "gate: the second merge in one command reached its own check"
+g "echo \$(gh pr merge 9) \$(gh pr merge $U --disable-auto)" "$R"; t $? 2 "gate: --disable-auto of a later merge does not cover an earlier one"
+setj pr.json '.mergeable_state = "dirty"'
+gr "COORD_READY_OVERRIDE=\"outer only\" \$(gh pr merge $U)" "a merge in \$(...) after an outer override"
+grep -q "outer only" "$R/.coordinator/overrides.log"; t $? 1 "gate: an outer override does not cover a merge in \$(...)"
 fixtures; echo '[]' > "$STUB_DIR/files.json"
 g "gh pr merge --squash" "$NR"; t $? 2 "gate: unresolvable merge in a non-repo directory fails closed"
 has "$(cat "$BIN/gate.err")" "could not resolve" "gate: unresolvable reason on stderr"
