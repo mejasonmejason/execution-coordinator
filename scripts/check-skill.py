@@ -25,12 +25,20 @@ def read(*p):
 
 text = read("SKILL.md")
 errors = []
-parts = text.split("---")
-if not text.startswith("---") or len(parts) < 3:
+# Frontmatter runs from the first line to the next line that is only ---. A --- inside a value does not end it.
+fm_m = re.match(r"---[ \t]*\n(.*?)^---[ \t]*$", text, re.S | re.M)
+if not fm_m:
     sys.exit("SKILL.md: frontmatter missing (must start with ---)")
-fm = parts[1]
-body = text[len(parts[0]) + 3 + len(parts[1]) + 3:].lstrip("\n")
-keys = re.findall(r"^([\w-]+):", fm, re.M)
+fm = fm_m.group(1)
+body = text[fm_m.end():].lstrip("\n")
+keys = re.findall(r"^([\w-]+):(?=\s|$)", fm, re.M)
+# Every top-level line must be a plain key, so a quoted key, a space before the colon or a ? key is not missed.
+for ln in fm.split("\n"):
+    if ln.strip() and ln[0] not in " \t#" and not re.match(r"[\w-]+:(\s|$)", ln):
+        errors.append(f"frontmatter line {ln[:40]!r} is not a plain top-level key")
+dupes = sorted({k for k in keys if keys.count(k) > 1})
+if dupes:
+    errors.append(f"frontmatter repeats a key: {', '.join(dupes)} (YAML keeps the last value)")
 
 
 class Unsupported(Exception):
@@ -56,36 +64,73 @@ DQ_ESCAPES = {"0": "\0", "a": "\a", "b": "\b", "t": "\t", "\t": "\t", "n": "\n",
               "P": "\u2029"}
 
 
+ESCAPE = re.compile(r"x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.", re.S)
+
+
+def flow_quoted(inner, double):
+    """Decode the text between the quotes of a quoted scalar.
+
+    A line break folds to a space, and each blank line after it gives a newline. Whitespace around a line break is
+    removed, but an escaped character is content and is never removed. In a double-quoted scalar a backslash before a
+    line break joins the lines with nothing between; an even run of backslashes is escaped backslashes instead.
+    """
+    out, kept, i = [], 0, 0  # out[:kept] must not lose trailing whitespace to a fold
+    while i < len(inner):
+        c = inner[i]
+        if c == "\n":
+            while len(out) > kept and out[-1] in (" ", "\t"):
+                out.pop()
+            breaks, i = 0, i + 1
+            while True:
+                j = i
+                while j < len(inner) and inner[j] in " \t":
+                    j += 1
+                if j < len(inner) and inner[j] == "\n":
+                    breaks, i = breaks + 1, j + 1
+                else:
+                    i = j
+                    break
+            out.append("\n" * breaks if breaks else " ")
+            kept = len(out)
+        elif double and c == "\\" and inner[i + 1:i + 2] == "\n":
+            i += 2
+            while True:  # the next line's indentation goes; each blank line after the escaped break is a newline
+                while i < len(inner) and inner[i] in " \t":
+                    i += 1
+                if i < len(inner) and inner[i] == "\n":
+                    out.append("\n")
+                    i += 1
+                else:
+                    break
+            kept = len(out)
+        elif double and c == "\\":
+            m = ESCAPE.match(inner, i + 1)
+            e = m.group(0) if m else ""
+            if e in DQ_ESCAPES:
+                out.append(DQ_ESCAPES[e])
+            elif len(e) > 1:
+                out.append(chr(int(e[1:], 16)))
+            else:
+                raise Unsupported(f"unknown escape \\{e}")
+            kept, i = len(out), i + 1 + len(e)
+        elif not double and inner.startswith("''", i):
+            out.append("'")
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def quoted(rest, cont, q):
     """Value of a single- or double-quoted scalar that starts on the key line and may continue on indented lines."""
-    lines = [rest[1:]] + cont
-    raw = "\n".join(lines)
-    if q == "'":
-        m = re.match(r"((?:[^']|'')*)'", raw)
-        if not m:
-            raise Unsupported("unterminated single-quoted scalar")
-        tail, value = raw[m.end():], fold_flow(m.group(1).split("\n")).replace("''", "'")
-    else:
-        m = re.match(r'((?:[^"\\]|\\.|\\\n)*)"', raw)
-        if not m:
-            raise Unsupported("unterminated double-quoted scalar")
-        tail, inner = raw[m.end():], m.group(1)
-        inner = re.sub(r"\\[ \t]*\n[ \t]*", "", inner)  # an escaped line break joins the lines with nothing between
-
-        def esc(e):
-            c = e.group(1)
-            if c in DQ_ESCAPES:
-                return DQ_ESCAPES[c]
-            width = {"x": 2, "u": 4, "U": 8}.get(c[0])
-            if width and re.fullmatch(r"[0-9A-Fa-f]{%d}" % width, c[1:]):
-                return chr(int(c[1:], 16))
-            raise Unsupported(f"unknown escape \\{c}")
-
-        # Fold first, so an escaped \n is not treated as a line break.
-        value = re.sub(r"\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)", esc, fold_flow(inner.split("\n")))
-    if tail.strip() and not re.fullmatch(r"\s+#.*|\s*", tail, re.S):
+    raw = "\n".join([rest[1:]] + cont)
+    m = re.match(r"((?:[^']|'')*)'" if q == "'" else r'((?:[^"\\]|\\[\s\S])*)"', raw)
+    if not m:
+        raise Unsupported("unterminated quoted scalar")
+    if not re.fullmatch(r"(?:[ \t]+(?:#[^\n]*)?)?(?:\n[ \t]*(?:#[^\n]*)?)*", raw[m.end():]):
         raise Unsupported("text after the closing quote")
-    return value
+    return flow_quoted(m.group(1), q == '"')
 
 
 def block_scalar(header, cont):
@@ -95,16 +140,25 @@ def block_scalar(header, cont):
         raise Unsupported(f"bad block scalar header {header!r}")
     style, chomp = m.group(1), m.group(3) or m.group(4) or ""
     explicit = m.group(2) or m.group(5)
-    first = next((ln for ln in cont if ln.strip()), None)
-    if first is None:
-        return ""
-    indent = int(explicit) if explicit else len(first) - len(first.lstrip(" "))
-    if "\t" in first[:indent] or indent == 0:
-        raise Unsupported("block scalar indentation is not spaces")
+    # A line of spaces only is blank. A tab is content, so "  <tab>" is a content line.
+    at = next((k for k, ln in enumerate(cont) if ln.strip(" ")), None)
+    if at is None:
+        return "\n" * len(cont) if chomp == "+" else ""
+    indent = int(explicit) if explicit else len(cont[at]) - len(cont[at].lstrip(" "))
+    if indent == 0:
+        raise Unsupported("block scalar content is not indented")
+    if not explicit and any(len(ln) > indent for ln in cont[:at]):
+        raise Unsupported("a leading blank line is longer than the block indentation")
+    # A less-indented line ends the block. Only comment lines may follow it.
+    end = next((k for k in range(at, len(cont)) if cont[k].strip(" ") and not cont[k].startswith(" " * indent)), None)
+    if end is not None:
+        if not all(ln.lstrip(" \t").startswith("#") or not ln.strip() for ln in cont[end:]):
+            raise Unsupported("block scalar line is less indented than the first line")
+        cont = cont[:end]
     lines = []
     for ln in cont:
-        if not ln.strip():
-            lines.append(ln[indent:] if style == "|" and len(ln) > indent else "")
+        if not ln.strip(" "):
+            lines.append(ln[indent:])  # spaces past the block indentation are content, in | and > alike
         elif not ln.startswith(" " * indent):
             raise Unsupported("block scalar line is less indented than the first line")
         else:
@@ -141,23 +195,32 @@ def scalar(key):
     Raises Unsupported for any other YAML form (flow collections, anchors, aliases, tags, nested mappings), so a
     value the checker cannot measure fails instead of passing on its first line.
     """
-    lines = fm.split("\n")
+    lines = fm.split("\n")[:-1]  # fm ends with a newline; the empty item after it is not a line
     for i, ln in enumerate(lines):
         m = re.match(rf"{re.escape(key)}:(?:[ \t]+(.*)|[ \t]*)$", ln)
         if m:
             break
     else:
         return None
-    rest = (m.group(1) or "").strip()
+    raw_rest = (m.group(1) or "").lstrip()  # a quoted value may end in an escaped space
+    if raw_rest.startswith("#"):
+        raw_rest = ""  # a comment, not a value
+    rest = raw_rest.rstrip()
     cont = []
     for ln in lines[i + 1:]:
         if ln.strip() and ln[0] not in " \t":
             break
         cont.append(ln)
+    if not rest:  # the value can start on a later line; a quote or block header there sets its form
+        while cont and (not cont[0].strip() or cont[0].lstrip().startswith("#")):
+            cont = cont[1:]
+        if cont and cont[0].lstrip()[:1] in ("'", '"', "|", ">"):
+            raw_rest, cont = cont[0].lstrip(), cont[1:]
+            rest = raw_rest.rstrip()
     if rest[:1] in ("|", ">"):
         return block_scalar(rest, cont)
     if rest[:1] in ("'", '"'):
-        return quoted(rest, cont, rest[0])
+        return quoted(raw_rest, cont, rest[0])
     if rest[:1] in tuple("[]{}&*!%@`,") or re.match(r"[-?:](\s|$)", rest) or rest.startswith("#"):
         raise Unsupported(f"value starts with {rest[:1]!r}")
     while cont and not cont[-1].strip():
@@ -168,7 +231,8 @@ def scalar(key):
             raise Unsupported("value holds a nested mapping or sequence")
     if not rest and cont:
         plain = plain[1:]
-    return fold_flow(plain).strip()
+    value = fold_flow(plain).strip()
+    return "" if value in ("~", "null", "Null", "NULL") else value
 
 
 def field(key):
@@ -211,37 +275,88 @@ for label, got, limit in (("lines", n_lines, 500), ("words", n_words, 5000), ("c
         errors.append(f"SKILL.md body is {got} {label} (limit {limit})")
 
 # Links: every local Markdown link in SKILL.md and references/*.md must resolve, relative to the file that holds it.
-# references/ is one level deep and every file in it is linked from SKILL.md. Code spans and fenced code are not links.
-INLINE_LINK = re.compile(r"!?\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
-REF_DEF = re.compile(r"^ {0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*(<[^>\n]*>|\S+)", re.M)
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?(?:^ {0,3}\1[`~]*[ \t]*$|\Z)", re.M | re.S)
-CODE_SPAN = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)", re.S)
+# references/ is one level deep and every file in it is linked from SKILL.md. Code (fenced, indented or in a code
+# span), HTML comments, footnote definitions and an escaped \[ are not links.
+LINK_TEXT = r"(?:[^\[\]\\]|\\.|\[(?:[^\[\]\\]|\\.)*\])*"  # one level of nested brackets, as in [![badge](img)](x)
+INLINE_LINK = re.compile(r"\[" + LINK_TEXT + r"\]\(\s*(<[^>\n]*>|(?:[^()\s]|\([^()\s]*\))+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+REF_DEF = re.compile(r"^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(<[^>\n]*>|\S+)", re.M)
+CODE_SPAN = re.compile(r"(`+)(?!`)(?:(?!\n[ \t]*\n).)*?(?<!`)\1(?!`)", re.S)  # never across a blank line
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+LIST_ITEM = re.compile(r" {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)")
+
+
+def drop_fenced_code(text):
+    """Blank out fenced code blocks. An unclosed fence runs to the end of the file, as in CommonMark."""
+    out, fence = [], None
+    for ln in text.split("\n"):
+        if fence is None:
+            m = re.match(r" {0,3}(`{3,}(?=[^`]*$)|~{3,})", ln)
+            fence = m.group(1) if m else None
+            out.append("" if m else ln)
+        else:
+            out.append("")
+            if re.fullmatch(r" {0,3}%s{%d,}[ \t]*" % (re.escape(fence[0]), len(fence)), ln):
+                fence = None
+    return "\n".join(out)
+
+
+def drop_indented_code(text):
+    """Blank out indented code blocks: 4-space lines after a blank line that do not continue a list item."""
+    lines, out, in_code, prev = text.split("\n"), [], False, ""  # prev: last non-blank line outside code
+    for i, ln in enumerate(lines):
+        blank, indented = not ln.strip(), ln.startswith(("    ", "\t"))
+        if in_code and (blank or indented):
+            out.append("")
+            continue
+        starts_code = indented and not blank and (i == 0 or not lines[i - 1].strip())
+        if starts_code and (not prev or (prev[0] not in " \t" and not LIST_ITEM.match(prev))):
+            in_code = True
+            out.append("")
+            continue
+        in_code = False
+        out.append(ln)
+        if not blank:
+            prev = ln
+    return "\n".join(out)
 
 
 def local_links(source_text, source_dir):
     """Local link targets, resolved to repo-root-relative paths. URLs, mailto: and #anchors are skipped."""
-    prose = CODE_SPAN.sub("", FENCE.sub("", source_text))
+    prose = CODE_SPAN.sub("", drop_indented_code(HTML_COMMENT.sub("", drop_fenced_code(source_text))))
+    found = []
+    for m in re.finditer(r"\[", prose):  # every [ in turn, so a link inside another link's text is found too
+        backslashes = len(prose[:m.start()]) - len(prose[:m.start()].rstrip("\\"))
+        link = INLINE_LINK.match(prose, m.start()) if backslashes % 2 == 0 else None
+        if link:
+            found.append(link.group(1))
     out = []
-    for target in INLINE_LINK.findall(prose) + REF_DEF.findall(prose):
+    for target in found + REF_DEF.findall(prose):
         target = target.strip("<>")
         if re.match(r"[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith(("#", "//")):
             continue
-        target = unquote(re.split(r"[#?]", target, maxsplit=1)[0])
+        target = re.sub(r"\\([!-/:-@\[-`{-~])", r"\1", re.split(r"[#?]", target, maxsplit=1)[0])
+        target = unquote(target)
         if target:
-            base = "" if target.startswith("/") else source_dir
-            out.append(os.path.normpath(os.path.join(base, target.lstrip("/"))))
-    return out
+            out.append(target if target.startswith("/") else os.path.normpath(os.path.join(source_dir, target)))
+    return list(dict.fromkeys(out))
 
 
 def check_links(rel, source_text):
-    """Report each local link in file rel whose target is missing or outside the repository; return the targets."""
-    targets = local_links(source_text, os.path.dirname(rel))
-    for target in targets:
-        if target == ".." or target.startswith(".." + os.sep):
+    """Report each local link in file rel whose target is missing or outside the repository, once per target.
+
+    Return the targets that exist, so a later check does not report a missing target a second time.
+    """
+    good = []
+    for target in local_links(source_text, os.path.dirname(rel)):
+        if target.startswith("/"):
+            errors.append(f"{rel} links to {target}, an absolute path (it resolves against the host, not the skill)")
+        elif target == ".." or target.startswith(".." + os.sep):
             errors.append(f"{rel} links to {target}, which is outside the repository")
         elif not os.path.exists(path(target)):
             errors.append(f"{rel} links to {target}, which does not exist")
-    return targets
+        else:
+            good.append(target)
+    return good
 
 
 ref_dir = path("references")
