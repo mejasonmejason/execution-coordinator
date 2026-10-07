@@ -44,7 +44,7 @@ IGNORE="${IGNORE_LOGINS:-codecov,dependabot,renovate,github-actions-notices}"
 # in the [Codex usage dashboard](url).\nTo continue using code reviews, you can upgrade your account or add
 # credits to your account and enable them for code reviews in your [settings](url)."
 DEFAULT_NOTICES='chatgpt-codex-connector[bot]:You have reached your Codex usage limits for code reviews\.(\s+You can see your limits in the \[Codex usage dashboard\]\(https://chatgpt\.com/codex/cloud/settings/usage\)\.)?(\s+To continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your \[settings\]\(https://chatgpt\.com/codex/cloud/settings/code-review\)\.)?'
-DEFAULT_NOTICES+='|chatgpt-codex-connector[bot]:<!-- codex-pull-request-review-summary -->\s+## Codex Review Summary\s+This comment shows the latest Codex review activity on this pull request\.\s+\x7C Review \x7C Status \x7C Commit \x7C Review trigger \x7C\s+\x7C --- \x7C --- \x7C --- \x7C --- \x7C(?:\s+\x7C \S{1,3} \*\*[A-Za-z ]{1,30}\*\* \x7C ✅ \*\*Completed\*\* <relative-time datetime="[0-9TZ:.+-]{1,40}">[0-9TZ:.+-]{1,40}</relative-time> \x7C `[0-9a-f]{7,40}` \x7C [A-Za-z@" ]{1,40} \x7C){1,10}\s+<details> <summary>ℹ️ About Codex in GitHub</summary>\s+<br/>\s+\[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you\s+- Open a pull request for review\s+- Mark a draft as ready\s+- Comment "@codex review" or "@codex security review"\.\s+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings\.\s+</details>'
+DEFAULT_NOTICES+='|chatgpt-codex-connector[bot]:<!-- codex-pull-request-review-summary -->\s+## Codex Review Summary\s+This comment shows the latest Codex review activity on this pull request\.\s+\x7C Review \x7C Status \x7C Commit \x7C Review trigger \x7C\s+\x7C --- \x7C --- \x7C --- \x7C --- \x7C(?:\s+\x7C \S{1,2} \*\*(?:Code)?(?:Security)? Review\*\* \x7C ✅ \*\*Completed\*\* <relative-time datetime="[0-9TZ:.+-]{1,40}">[0-9TZ:.+-]{1,40}</relative-time> \x7C `[0-9a-f]{7,40}` \x7C [A-Za-z@" ]{1,40} \x7C){1,10}\s+<details> <summary>ℹ️ About Codex in GitHub</summary>\s+<br/>\s+\[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you\s+- Open a pull request for review\s+- Mark a draft as ready\s+- Comment "@codex review" or "@codex security review"\.\s+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings\.\s+</details>'
 NOTICES="${COORD_NOTICE_PATTERNS-$DEFAULT_NOTICES}"
 ALLOW_WILDCARD="${COORD_NOTICE_ALLOW_WILDCARD:-0}"
 status=0
@@ -124,12 +124,15 @@ for url in "$@"; do
     def ignored: ((.author.login // "ghost") as $l | ($ign | split(",")) | index($l)) != null;
     def unbot: sub("\\[bot\\]$"; "");
     # login:regex pairs split at the FIRST colon; the login is a plain string, never a regex
+    # A status comment that its bot edits in place keeps its first createdAt, so the time filter would hide
+    # a later edit (a review that starts after an agent reply). It stays ACTION until it reads as a notice.
+    def status_comment: (.body // "") | contains("<!-- codex-pull-request-review-summary -->");
     def notice: (.author.login // "ghost") as $l | (.body // "") as $b
       | any($nt | split("|")[] | select(index(":") != null);
           (index(":") as $i | .[:$i]) as $pl | (index(":") as $i | .[$i+1:]) as $re
           | ($pl == "*" or ($pl | unbot) == ($l | unbot)) and ($re != "")
             and ($b | test("\\A\\s*(?:" + $re + ")\\s*\\z"; "i")));
-    (.data.viewer.login // error("response has no viewer login")) as $me
+    ((.data.viewer.login | select(type == "string" and . != "")) // error("response has no viewer login")) as $me
     | (.data.repository.pullRequest // error("response has no pullRequest")) as $pr
     # last agent comment time anywhere on the PR, for PR-level comments and review summaries
     | ([$pr.comments.nodes[], ($pr.reviewThreads.nodes[].comments.nodes[]) | select(agent) | .createdAt] | max // "") as $lastAgent
@@ -141,7 +144,7 @@ for url in "$@"; do
         | "INFO      notice by \(.author.login): \(.url)" ),
       ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and notice and (ignored | not))
         | "INFO      notice by \(.author.login): \(.url)" ),
-      ( $pr.comments.nodes[] | select((agent | not) and (notice | not) and (ignored | not) and .createdAt > $lastAgent)
+      ( $pr.comments.nodes[] | select((agent | not) and (notice | not) and (ignored | not) and (.createdAt > $lastAgent or status_comment))
         | "ACTION    PR comment by \(.author.login): \(.url)" ),
       ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and (agent | not) and (notice | not) and (ignored | not) and (.submittedAt // "") > $lastAgent)
         | "ACTION    review summary (\(.state)) by \(.author.login): \(.url)" ),

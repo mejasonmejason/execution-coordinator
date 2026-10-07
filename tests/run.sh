@@ -325,6 +325,14 @@ fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 
 "$pt" "$U" >/dev/null; t $? 1 "summary: the same body from another login is ACTION"
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS")"
 "$ready" "$U" --paths "$ALL" >/dev/null; t $? 0 "summary: ready.sh is READY with only a Completed summary"
+# Codex edits the summary in place, so it keeps its first createdAt. A later agent reply must not hide a Running edit.
+AG='[{"author":{"login":"me"},"body":"done 🤖","url":"a1","createdAt":"2026-01-02T00:00:00Z"}]'
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CR") + $AG"
+out=$("$pt" "$U"); t $? 1 "summary: a Running summary edited after an agent reply is still ACTION"
+has "$out" "ACTION    PR comment by chatgpt-codex-connector: n1" "summary: the edited Running summary is reported ACTION"
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS") + $AG"
+"$pt" "$U" >/dev/null; t $? 0 "summary: a Completed summary before an agent reply is INFO"
+t "$(inj "${CS/📝 \*\*Code Review\*\*/📝 **Auth token leaks in login**}")" 1 "summary: an unknown review name is ACTION"
 # an empty, whitespace-only or pullRequest-less response is unreadable (exit 3), never OK, never READY
 for body in '' '   
   ' '{"data":{"repository":{"pullRequest":null}}}' '{"data":{"viewer":{"login":"me"}}}' '{}'; do
@@ -335,7 +343,7 @@ for body in '' '
   out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "empty: ready.sh is not READY on response '$(printf %s "$body" | tr -d '\n ' | head -c 40)'"
 done
 # a response with no viewer login cannot detect UNSENT, so it is unreadable (exit 3), never OK (issue #32)
-for vw in 'null' '{"login":null}' 'absent'; do
+for vw in 'null' '{"login":null}' '{"login":""}' 'absent'; do
   fixtures
   if [ "$vw" = absent ]; then setj graphql.json 'del(.data.viewer)'; else setj graphql.json ".data.viewer = $vw"; fi
   out=$("$pt" "$U" 2>&1); rc=$?
