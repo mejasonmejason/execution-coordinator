@@ -36,7 +36,29 @@ scripts/status.sh dispatch <key> --worktree W --paths "a/**,b/**" [--run-id R] [
 scripts/status.sh dispatch <key> --state awaiting-acceptance --pr <url>   # on reported completion
 ```
 
-The first form records the branch and the worktree `HEAD` as `base_sha`. `ready.sh --key` reads the PR, owned paths and base from this record, so set `--pr` before acceptance. A `ready.sh --key` run stores a local verdict bound to that dispatch key, the PR, its head, the `--paths` scope, the run id and the `--allow-pending` flag. `status.sh` refuses `--state accepted` (exit 4) unless that verdict passed with no blockers, was not taken with `--allow-pending`, matches the current PR, paths and run, and its head is the PR's current head. A merged PR still matches the head it merged at; a PR closed without merging is refused. A change to `--pr`, `--paths` or `--run-id` clears the verdict. Equivalent PR forms and a reordered path list do not. Every `ready.sh --key` run first records `ok=false`, and any exit 3 leaves it there, so an old pass never survives a failed or interrupted check. Once a dispatch is `accepted`, later updates such as `--note` skip the gate, `ready.sh --key` keeps its verdict, and a `--pr`, `--paths` or `--run-id` change is refused unless `--state` moves it out of `accepted`.
+The first form records the branch and the worktree `HEAD` as `base_sha`. `ready.sh --key` reads the PR, owned paths and base from this record, so set `--pr` before acceptance.
+
+A `ready.sh --key` run stores a local verdict for that dispatch key. The verdict records the PR, its head, the `--paths` scope, the run id and the `--allow-pending` flag.
+
+`status.sh` refuses `--state accepted` (exit 4) unless all of these are true:
+
+- The verdict passed with no blockers.
+- The verdict was not taken with `--allow-pending`.
+- The verdict matches the current PR, paths and run.
+- The verdict head is the PR's current head. A merged PR still matches the head it merged at. A PR closed without merging is refused.
+
+The verdict follows these rules:
+
+- A change to `--pr`, `--paths` or `--run-id` clears the verdict. Equivalent PR forms and a reordered path list do not.
+- Each `ready.sh --key` run first records `ok=false` with a token for that run. An exit 3 leaves `ok=false` in place. The one exception: when `ready.sh` cannot take the lock, it records nothing.
+- A run writes its final verdict only while its token is still the stored one. When two runs overlap, the run that started later decides.
+- A re-check of a merged PR keeps the stored verdict when the PR head is the head that verdict checked.
+- On an `accepted` dispatch, later updates such as `--note` skip the gate, and `ready.sh --key` keeps the verdict. A `--pr`, `--paths` or `--run-id` change is refused until `--state` moves the dispatch out of `accepted`.
+
+Both scripts write under the `.coordinator/.lock` directory:
+
+- A dispatch update that finds the record changed while it ran exits 5. Run it again.
+- A script waits up to `COORD_LOCK_TRIES` tries of 0.1 seconds for the lock (default 100; 0 means one try). A lock still held after that is left over from a stopped process. Remove it (`rm -r .coordinator/.lock`) and run the command again.
 
 ## Local or hosted
 

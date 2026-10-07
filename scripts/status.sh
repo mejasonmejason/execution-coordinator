@@ -18,7 +18,8 @@
 # first. --branch, --worktree, --base-sha and --note never clear it. On an accepted dispatch the gate does not
 # run again, and pr, paths and run_id changes are refused unless --state moves it out of accepted.
 # Writes hold a lock directory (.coordinator/.lock). A dispatch update that finds the record changed since it
-# read it exits 5 ("dispatch changed; retry"). COORD_LOCK_TRIES sets the lock wait in 0.1s tries (default 100).
+# read it exits 5 ("dispatch changed; retry"). COORD_LOCK_TRIES sets the lock wait in 0.1s tries (default 100;
+# 0 means one try). A lock still held after that is reported as left over (exit 1).
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "status.sh: not inside a git repository" >&2; exit 2; }
@@ -46,29 +47,30 @@ session_id() {
   echo "${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}"
 }
 current() { if [ -f "$file" ]; then cat "$file"; else echo '{}'; fi; }
-# Portable lock (mkdir is atomic; no flock on macOS). A lock whose holder pid is dead is cleared.
+# Lock: mkdir is atomic (no flock on macOS). A write holds it for milliseconds, so a lock that outlasts
+# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is left over from a stopped process.
+# Keep these lines the same in status.sh and ready.sh.
+locked="" tmp=""
 lock() {
-  local i pid
-  for i in $(seq 1 "${COORD_LOCK_TRIES:-100}"); do
-    if mkdir "$dir/.lock" 2>/dev/null; then echo $$ > "$dir/.lock/pid"; trap unlock EXIT; return 0; fi
-    pid=$(cat "$dir/.lock/pid" 2>/dev/null || true)
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && [ "$(cat "$dir/.lock/pid" 2>/dev/null)" = "$pid" ]; then
-      rm -rf "$dir/.lock"; continue
-    fi
+  local i=0; [ -w "$dir" ] || { echo "${0##*/}: cannot lock: $dir is not writable" >&2; return 1; }
+  until mkdir "$dir/.lock" 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is left over from a stopped process; remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
     sleep 0.1
-  done
-  echo "status.sh: $dir/.lock is held${pid:+ by pid $pid}; retry (remove it only if that process is gone)" >&2
-  return 1
+  done; locked=1
 }
-unlock() { rm -rf "$dir/.lock"; trap - EXIT; }
-# Atomic write under the lock: jq program and args, applied to the current file.
+unlock() { [ -z "$locked" ] || rm -rf "$dir/.lock"; locked=""; }
+trap '[ -z "$tmp" ] || rm -f "$tmp" "$tmp.err"; unlock' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+# Atomic write under the lock: jq program and args, applied to the current file. Returns 1 when the lock is not
+# taken, 5 when the program halts with code 10 (the record changed), 2 for any other jq error.
 write() {
   mkdir -p "$dir"
   [ -f "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore"
   lock || return 1
-  local tmp; tmp=$(mktemp "$dir/.status.XXXXXX")
-  if current | jq "$@" > "$tmp" 2> "$tmp.err"; then mv "$tmp" "$file"; rm -f "$tmp.err"; unlock; return 0; fi
-  sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; rm -f "$tmp" "$tmp.err"; unlock; return 2
+  tmp=$(mktemp "$dir/.status.XXXXXX") || { tmp=""; unlock; return 1; }
+  local rc=0; current | jq "$@" > "$tmp" 2> "$tmp.err" || rc=$?
+  if [ "$rc" -eq 0 ]; then mv "$tmp" "$file"; else sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; fi
+  rm -f "$tmp" "$tmp.err"; tmp=""; unlock
+  case "$rc" in 0) return 0;; 10) return 5;; *) return 2;; esac
 }
 need() { [ "$1" -ge 2 ] || { echo "status.sh: $2 needs a value" >&2; exit 2; }; }
 
@@ -145,17 +147,17 @@ case "${1:-}" in
           + (if $pr != "" then {pr:$pr} else {} end)
           + (if $note != "" then {note:$note} else {} end)
           + {updated_at:$t})
-      | if bind == ($old | bind) then . elif $old.state == "accepted" and .state == "accepted" then error("rebind")
-        else del(.ready) end' <<<"${prev:-null}" 2>/dev/null) || {
-      echo "status.sh: refusing: dispatch \"$key\" is accepted; move it out of accepted with --state before changing pr, paths or run_id" >&2
-      exit 4; }
+      | if bind == ($old | bind) then . elif $old.state == "accepted" and .state == "accepted" then "" | halt_error(11)
+        else del(.ready) end' <<<"${prev:-null}" 2>&1) || {
+      [ $? -ne 11 ] || { echo "status.sh: refusing: dispatch \"$key\" is accepted; move it out of accepted with --state before changing pr, paths or run_id" >&2; exit 4; }
+      echo "status.sh: could not build the dispatch record: $rec" >&2; exit 2; }
     if [ "$(jq -r .state <<<"$rec")" = "accepted" ] && [ "$(jq -r '.state // ""' <<<"$pj")" != "accepted" ]; then
       refuse() { echo "status.sh: refusing: dispatch \"$key\" $*" >&2; exit 4; }
       rerun="; run scripts/ready.sh --key $key first"
       why=$(jq -r --arg k "$key" --arg gh "${GH_HOST:-github.com}" "$lib"'
         .ready as $v
-        | if ($v | type) != "object" or $v.ok != true then "has no passing READY check"
-          elif $v.unreadable == true or $v.in_progress == true then "has a READY check that did not finish"
+        | if ($v | type) == "object" and $v.in_progress == true then "has a READY check that did not finish"
+          elif ($v | type) != "object" or $v.ok != true or $v.unreadable == true then "has no passing READY check"
           elif $v.allow_pending != false then "has a READY verdict that does not rule out --allow-pending"
           elif $v.blockers != [] then "has a READY verdict with blockers"
           elif $v.key != $k then "has a READY verdict recorded for another dispatch"
@@ -175,9 +177,10 @@ case "${1:-}" in
     fi
     # Compare-and-swap: write only if the record is still the one read above.
     write --arg k "$key" --argjson prev "${prev:-null}" --argjson rec "$rec" '
-      if (.dispatches[$k] // null) != $prev then error("dispatch changed; retry (\"\($k)\" was updated while this ran)")
+      if (.dispatches[$k] // null) != $prev
+      then "status.sh: dispatch changed; retry (\"\($k)\" was updated while this ran)\n" | halt_error(10)
       else . end
-      | .dispatches = (.dispatches // {}) | .dispatches[$k] = $rec' || { rc=$?; [ "$rc" -eq 2 ] && exit 5; exit 1; }
+      | .dispatches = (.dispatches // {}) | .dispatches[$k] = $rec' || exit $?
     jq -r --arg k "$key" '.dispatches[$k] | "dispatch \($k): \(.state)\(if .base_sha then " base \(.base_sha[0:9])" else "" end)"' "$file"
     ;;
   *)

@@ -10,40 +10,43 @@
 #   tests; changed CI, test or lint config; head not descending from --base-sha.
 # --key K reads pr, paths and base_sha from dispatch K in <git root>/.coordinator/status.json (scripts/status.sh)
 #   and records the verdict there with the key, PR, head, paths, --allow-pending and run_id it covered, which
-#   `status.sh dispatch K --state accepted` requires. It first records ok=false ("in progress"), so a run that
-#   stops early never leaves an old pass. Every exit 3 with --key, usage errors included, records ok=false.
-#   An accepted dispatch keeps its verdict. Writes hold the .coordinator/.lock directory (COORD_LOCK_TRIES).
+#   `status.sh dispatch K --state accepted` requires. It first records ok=false ("in progress") with a token for
+#   this run, so a run that stops early never leaves an old pass. The final verdict lands only while that token is
+#   still stored; a later run, or a pr, paths or run_id change, replaces it. Every exit 3 with --key, usage errors
+#   included, records ok=false, unless the lock cannot be taken. An accepted dispatch keeps its verdict, and so
+#   does a merged PR whose head is the stored verdict's head. Writes hold .coordinator/.lock (COORD_LOCK_TRIES).
 # Output: "READY|NOT READY <url> @ <sha9>", then "  BLOCK ..." and "  WARN ..." lines. Exit 0 READY, 1 NOT READY,
 # 3 unreadable (never treat 3 as READY). A PR, check, review or file read that cannot be parsed is unreadable.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-# Portable lock shared with status.sh (mkdir is atomic; no flock on macOS). A dead holder's lock is cleared.
+# Lock: mkdir is atomic (no flock on macOS). A write holds it for milliseconds, so a lock that outlasts
+# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is left over from a stopped process.
+# Keep these lines the same in status.sh and ready.sh.
+locked="" tmp=""
 lock() {
-  local i pid l; l="$(dirname "$sfile")/.lock"
-  for i in $(seq 1 "${COORD_LOCK_TRIES:-100}"); do
-    if mkdir "$l" 2>/dev/null; then echo $$ > "$l/pid"; return 0; fi
-    pid=$(cat "$l/pid" 2>/dev/null || true)
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && [ "$(cat "$l/pid" 2>/dev/null)" = "$pid" ]; then
-      rm -rf "$l"; continue
-    fi
+  local i=0; [ -w "$dir" ] || { echo "${0##*/}: cannot lock: $dir is not writable" >&2; return 1; }
+  until mkdir "$dir/.lock" 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is left over from a stopped process; remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
     sleep 0.1
-  done
-  echo "ready.sh: $l is held${pid:+ by pid $pid}" >&2; return 1
+  done; locked=1
 }
-unlock() { rm -rf "$(dirname "$sfile")/.lock"; }
-# record VERDICT_JSON: store the verdict on dispatch $key, under the lock. An accepted or missing dispatch is left
-# alone. Sets the dispatch PR only when it has none.
+unlock() { [ -z "$locked" ] || rm -rf "$dir/.lock"; locked=""; }
+trap '[ -z "$tmp" ] || rm -rf "$tmp"; [ -z "$dir" ] || rm -f "$dir/.status.$$"; unlock' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+tok="$$.$RANDOM$RANDOM.$(date +%s)"  # this run's token on the dispatch verdict
+# record VERDICT_JSON [own]: store the verdict and this run's token on dispatch $key, under the lock. With "own" it
+# writes only while the stored token is this run's. An accepted or missing dispatch is left alone. Sets the
+# dispatch PR only when it has none.
 record() {
   [ -n "${sfile:-}" ] && [ -n "${d:-}" ] || return 0
   lock || return 1
-  local stmp; stmp=$(mktemp "$(dirname "$sfile")/.status.XXXXXX") || { unlock; return 1; }
-  if jq --arg k "$key" --argjson v "$1" '
-       if (.dispatches[$k] // null) == null or .dispatches[$k].state == "accepted" then .
-       else (if $v.pr then .dispatches[$k].pr //= $v.pr else . end) | .dispatches[$k].ready = ($v + {key: $k}) end' \
-       "$sfile" > "$stmp"; then mv "$stmp" "$sfile"; unlock; return 0; fi
-  rm -f "$stmp"; unlock; return 1
+  local rc=0; jq --arg k "$key" --arg tok "$tok" --arg own "${2:-}" --argjson v "$1" '
+       .dispatches[$k] as $d
+       | if $d == null or $d.state == "accepted" or ($own != "" and $d.ready.token != $tok) then .
+         else (if $v.pr then .dispatches[$k].pr //= $v.pr else . end) | .dispatches[$k].ready = ($v + {key: $k, token: $tok}) end' \
+       "$sfile" > "$dir/.status.$$" && mv "$dir/.status.$$" "$sfile" || rc=1
+  rm -f "$dir/.status.$$"; unlock; return "$rc"
 }
 # Exit 3. With --key, the dispatch's verdict becomes ok=false, so an old pass never survives it.
 fail3() {
@@ -55,7 +58,7 @@ usage() { echo "ready.sh: $*" >&2; fail3 "$*"; }
 need() { [ "$1" -ge 2 ] || usage "$2 needs a value"; }
 
 # Find --key before the full parse, so a usage error below still clears that dispatch's verdict.
-ref="" sha="" paths="" base_sha="" key="" allow_pending=0 json=0 sfile="" d="" run=""
+ref="" sha="" paths="" base_sha="" key="" allow_pending=0 json=0 sfile="" dir="" d="" run="" prior=""
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[i]}" in -h|--help) sed -n '2,/^set /p' "$0" | grep '^#'; exit 0;; esac
@@ -63,10 +66,11 @@ for ((i = 0; i < ${#args[@]}; i++)); do
 done
 if [ -n "$key" ]; then
   root=$(git rev-parse --show-toplevel 2>/dev/null) || unreadable "--key needs to run inside the coordinated git repository"
-  sfile="$root/.coordinator/status.json"
+  dir="$root/.coordinator"; sfile="$dir/status.json"
   d=$(jq -c --arg k "$key" '.dispatches[$k] // empty' "$sfile" 2>/dev/null)
   [ -n "$d" ] || unreadable "no dispatch \"$key\" in $sfile"
   [ "$(jq -r .state <<<"$d")" != "accepted" ] || echo "ready.sh: dispatch \"$key\" is accepted; its verdict is kept" >&2
+  prior=$(jq -c '.ready // empty' <<<"$d")
   record "$(jq -cn --arg t "$(now)" '{ok: false, in_progress: true, at: $t, blockers: ["READY check in progress"]}')" \
     || unreadable "could not mark the READY check in progress in $sfile"
 fi
@@ -102,7 +106,7 @@ else
 fi
 R="repos/$owner/$repo"
 url="https://$host/$owner/$repo/pull/$num"
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+tmp=$(mktemp -d)
 api() { gh api --hostname "$host" "$@"; }
 
 api "$R/pulls/$num" > "$tmp/pr" 2> "$tmp/err" || unreadable "$(head -c 300 "$tmp/err")"
@@ -214,11 +218,19 @@ result=$(jq -Rn --slurpfile pr "$tmp/pr" --arg url "$url" --arg t "$(date -u +%Y
       warnings: ($v | map(select(startswith("W ")) | .[2:])), checked_at: $t }' < "$tmp/v")
 ok=$(jq -r '.ok' <<<"$result" 2>/dev/null); [ "$ok" = "true" ] || [ "$ok" = "false" ] || unreadable "could not build the verdict"
 
-# The verdict names what it covered: PR, head, --paths scope, --allow-pending and the dispatch run.
-[ "$(jq -r .state <<<"$d" 2>/dev/null)" = "accepted" ] || record "$(jq -c --arg p "$paths" --argjson ap "$allow_pending" --arg run "$run" '
+# The verdict names what it covered: PR, head, --paths scope, --allow-pending and the dispatch run. A merged PR
+# whose head is the stored verdict's head keeps that verdict.
+verdict=$(jq -c --arg p "$paths" --argjson ap "$allow_pending" --arg run "$run" '
   {ok, pr, head, paths: ($p | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))),
-   allow_pending: ($ap == 1), run: (if $run == "" then null else $run end), at: .checked_at, blockers}' <<<"$result")" \
-  || unreadable "could not record the verdict in $sfile"
+   allow_pending: ($ap == 1), run: (if $run == "" then null else $run end), at: .checked_at, blockers}' <<<"$result")
+if [ -n "$prior" ] && [ "$(jq -r '.merged' "$tmp/pr")" = "true" ] && [ "$(jq -r '.head' <<<"$prior")" = "$head" ]; then
+  verdict="$prior"; echo "ready.sh: the PR is merged at the head the stored verdict checked; that verdict is kept" >&2
+fi
+if [ -n "$key" ] && [ "$(jq -r .state <<<"$d")" != "accepted" ]; then
+  record "$verdict" own || unreadable "could not record the verdict in $sfile"
+  [ "$(jq -r --arg k "$key" '.dispatches[$k].ready.token' "$sfile")" = "$tok" ] \
+    || echo "ready.sh: a later READY run or a pr, paths or run_id change replaced this run's record; this verdict was not recorded" >&2
+fi
 
 if [ "$json" -eq 1 ]; then
   echo "$result"
