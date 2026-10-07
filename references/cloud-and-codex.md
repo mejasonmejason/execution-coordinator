@@ -24,7 +24,7 @@ Cloud sessions have no tmux or cron, and their container ends with the session. 
 | Close a session | close the tab, rename it `[done]` | `archive_session`, which frees the container. Do it once `get_session` shows the session idle and its PRs are merged or closed. An archived session cannot receive messages or be bound to a Routine. |
 | Review threads | GraphQL | GraphQL is refused (403). `scripts/pr-threads.sh` falls back to the cloud-only REST route `repos/O/R/pulls/N/ccr/review_threads`. `COORD_THREADS_REST=1` forces the fallback. |
 | List and inspect PRs | `gh pr view`, the search API | Both are refused. Use `gh api 'repos/O/R/pulls?state=open'` and `gh api repos/O/R/pulls/N`. |
-| Merge, auto-merge, draft or ready | `gh pr merge`, `gh pr ready` | Merge with `gh api -X PUT repos/O/R/pulls/N/merge`, which the merge gate sees. The GitHub MCP merge tool also works, but no hook sees it, so run `scripts/ready.sh` first. For the rest use the cloud-only routes `pulls/N/ccr/auto_merge`, `.../ready_for_review` and `.../convert_to_draft`. |
+| Merge, auto-merge, draft or ready | `gh pr merge`, `gh pr ready` | Merge with `gh api -X PUT repos/O/R/pulls/N/merge`, which the merge gate sees. The GitHub MCP merge tool and the `gh api graphql` `mergePullRequest` mutation also work, but no hook sees them, so run `scripts/ready.sh` first. For the rest use the cloud-only routes `pulls/N/ccr/auto_merge`, `.../ready_for_review` and `.../convert_to_draft`. |
 
 ## Codex mapping
 

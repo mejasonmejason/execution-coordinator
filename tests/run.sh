@@ -28,6 +28,7 @@ echo "$*" >> "$STUB_DIR/calls.log"
 if [ -f "$STUB_DIR/side.sh" ]; then mv "$STUB_DIR/side.sh" "$STUB_DIR/side.run"; bash "$STUB_DIR/side.run"; fi
 jqf=""; path=""; sub="$1"; shift
 if [ "$sub" = "pr" ]; then
+  echo "${GH_HOST:-} $*" >> "$STUB_DIR/prview.log"
   [ "${STUB_PRVIEW:-0}" = "1" ] || { echo "no pull requests found" >&2; exit 1; }
   sel=""; [ "$2" != "--json" ] && [ -n "${2:-}" ] && sel="$2"
   echo "https://github.com/o/r/pull/${sel:-7}"; exit 0
@@ -716,6 +717,29 @@ STUB_PRVIEW=1 g "gh pr merge 'feature)' --squash" "$R"
 has "$(cat "$BIN/gate.err")" "pull/feature)" "gate: a quoted selector keeps its closing parenthesis"
 g "gh pr merge $U && gh pr merge 9" "$R"; t $? 2 "gate: two top-level merges are each checked"
 has "$(cat "$BIN/gate.err")" "could not resolve" "gate: the second top-level merge reached its own check"
+# PR #41 third review. pv runs a merge with gh pr view enabled and prints the gh pr view calls it made.
+pv() { : > "$STUB_DIR/prview.log"; STUB_PRVIEW=1 g "$1" "$R"; cat "$STUB_DIR/prview.log"; }
+has "$(pv "gh pr merge 45 -Rother/repo")" "45 -R other/repo" "gate: -Rowner/repo after merge reaches the resolve step"
+has "$(pv "gh pr merge 45 -R=other/repo")" "45 -R other/repo" "gate: -R=owner/repo after merge reaches the resolve step"
+has "$(pv "GH_REPO=other/repo gh pr merge 45")" "45 -R other/repo" "gate: a leading GH_REPO reaches the resolve step"
+has "$(pv "env GH_HOST=ghe.io gh pr merge 45")" "ghe.io view 45" "gate: GH_HOST after env reaches the resolve step"
+STUB_PRVIEW=1 g "cd /tmp && gh pr merge 7" "$R"; t $? 2 "gate: a number after cd blocks"
+has "$(cat "$BIN/gate.err")" "full PR URL" "gate: a number after cd asks for the full PR URL"
+STUB_PRVIEW=1 g "pushd /tmp; gh pr merge 7" "$R"; t $? 2 "gate: a number after pushd blocks"
+g "cd /tmp && gh pr merge $U" "$R"; t $? 0 "gate: a URL after cd is checked normally"
+g "gh pr merge 5 --body 'a gh pr merge b'" "$R"
+has "$(cat "$BIN/gate.err")" "keep the words gh" "gate: the block says how to keep merge text out"
+hasnt "$(cat "$BIN/gate.err")" "merge-gate:" "gate: the block message has one prefix"
+setj pr.json '.mergeable_state = "dirty"'
+g "gh api repos/o/r/pulls/7/merge" "$R"; t $? 0 "gate: a REST GET of the merge path is not gated"
+gr "gh api repos/o/r/pulls/7/merge -f merge_method=squash" "a REST merge with fields and no method"
+gr "gh api --method PUT repos/o/r/pulls/7/merge" "a REST merge with --method PUT"
+g "COORD_READY_OVERRIDE=\"blocked anyway\" gh pr merge https://github.com/o/r/pull/1 && gh pr merge $U" "$R"; t $? 2 "gate: an override next to a blocked merge blocks"
+hasnt "$(cat "$BIN/gate.err")" "override accepted" "gate: no override accepted message when the command is blocked"
+grep -q "blocked anyway" "$R/.coordinator/overrides.log"; t $? 1 "gate: no override logged when the command is blocked"
+g "COORD_READY_OVERRIDE=first COORD_READY_OVERRIDE=last gh pr merge $U" "$R"; t $? 0 "gate: repeated override assignments allowed"
+t "$(tail -1 "$R/.coordinator/overrides.log" | cut -f3)" "last" "gate: the last override assignment is the reason"
+gr "COORD_READY_OVERRIDE=x COORD_READY_OVERRIDE= gh pr merge $U" "an override cleared by a later empty assignment"
 fixtures; echo '[]' > "$STUB_DIR/files.json"
 g "gh pr merge --squash" "$NR"; t $? 2 "gate: unresolvable merge in a non-repo directory fails closed"
 has "$(cat "$BIN/gate.err")" "could not resolve" "gate: unresolvable reason on stderr"
