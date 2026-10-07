@@ -370,6 +370,57 @@ t "$(sj .dispatches.t1.ready.ok)" false "ready --key records the verdict"
 "$st" dispatch t1 --state accepted >/dev/null; t $? 0 "accepted allowed after a READY pass"
 "$ready" --key nope >/dev/null 2>&1; t $? 3 "ready --key with an unknown dispatch exits 3"
 
+# ---- acceptance is bound to the PR, head, scope and run that READY checked (#22) ------------------------------
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+H2=def4567890def4567890def4567890def4567890
+acc() { "$st" dispatch "$1" --state accepted >/dev/null 2>&1; }
+"$st" dispatch ba --pr "$U" --paths "$ALL" --run-id r1 >/dev/null
+"$ready" --key ba >/dev/null; t $? 0 "bind: READY passes for the dispatch"
+t "$(sj '.dispatches.ba.ready | [.ok, .pr, .head, (.paths | join(",")), .allow_pending, .run] | map(tostring) | join(" ")')" \
+  "true $U $H $ALL false r1" "bind: the verdict records pr, head, paths, allow_pending and run"
+# (a) the remote head moved after READY
+setj pr.json ".head.sha = \"$H2\""
+acc ba; t $? 4 "bind (a): accepted refused after the PR head moved"
+setj pr.json ".head.sha = \"$H\""
+"$st" dispatch ba --pr "$U" --paths "$ALL" --run-id r1 >/dev/null
+t "$(sj .dispatches.ba.ready.ok)" true "bind: re-sending the same pr, paths and run keeps the verdict"
+setj pr.json '.state = "closed" | .merged = true'
+acc ba; t $? 0 "bind: accepted allowed on a merged PR whose head READY checked"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch bh --pr "$U" >/dev/null; "$ready" --key bh >/dev/null
+rm "$STUB_DIR/pr.json"; acc bh; t $? 4 "bind: accepted refused when the PR head cannot be read"
+# (b) the key is reused for another PR, run or --paths scope
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+for f in "--pr https://github.com/o/r/pull/8" "--run-id r2" "--paths src/**"; do
+  k="bb${f%% *}"; "$st" dispatch "$k" --pr "$U" --paths "$ALL" --run-id r1 >/dev/null; "$ready" --key "$k" >/dev/null
+  # shellcheck disable=SC2086
+  "$st" dispatch "$k" $f >/dev/null
+  t "$(sj ".dispatches[\"$k\"].ready // \"cleared\"")" cleared "bind (b): dispatch $f clears the verdict"
+  acc "$k"; t $? 4 "bind (b): accepted refused after dispatch $f"
+done
+"$st" dispatch bp --pr "$U" --paths "$ALL" >/dev/null
+"$ready" --key bp --paths "**" >/dev/null; t $? 0 "bind (b): READY with a different --paths scope passes"
+acc bp; t $? 4 "bind (b): accepted refused when READY checked another --paths scope"
+"$st" dispatch bo --pr "$U" --paths "$ALL" >/dev/null
+"$ready" "o/r#8" --key bo >/dev/null; t $? 0 "bind (b): READY on another PR passes"
+t "$(sj .dispatches.bo.pr)" "$U" "bind (b): READY on another PR does not rewrite the dispatch PR"
+acc bo; t $? 4 "bind (b): accepted refused when READY checked another PR"
+"$st" dispatch bs --pr "o/r#7" --paths "$ALL" >/dev/null; "$ready" --key bs >/dev/null
+acc bs; t $? 0 "bind: an owner/repo#N dispatch PR matches the READY URL"
+# (c) a later READY is unreadable (exit 3)
+"$st" dispatch bc --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bc >/dev/null
+rm "$STUB_DIR/pr.json"; "$ready" --key bc >/dev/null 2>&1; t $? 3 "bind (c): a later READY is unreadable"
+t "$(sj .dispatches.bc.ready.ok)" false "bind (c): an unreadable READY replaces the old verdict with ok=false"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+acc bc; t $? 4 "bind (c): accepted refused after an unreadable READY"
+# (d) READY recorded with --allow-pending while a normal READY fails
+setj runs.json '.check_runs[0].status = "queued"'
+"$st" dispatch bd --pr "$U" --paths "$ALL" >/dev/null
+"$ready" --key bd >/dev/null; t $? 1 "bind (d): a normal READY fails on a pending required check"
+"$ready" --key bd --allow-pending >/dev/null; t $? 0 "bind (d): READY --allow-pending passes"
+t "$(sj .dispatches.bd.ready.allow_pending)" true "bind (d): the verdict records allow_pending"
+acc bd; t $? 4 "bind (d): accepted refused on an --allow-pending verdict"
+
 # ---- merge gate ----------------------------------------------------------------------------------------------
 g() { jq -n --arg c "$1" --arg d "$2" '{tool_input:{command:$c}, cwd:$d}' | "$gate" 2> "$BIN/gate.err"; }
 fixtures; echo '[]' > "$STUB_DIR/files.json"

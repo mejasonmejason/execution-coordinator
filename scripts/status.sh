@@ -11,7 +11,9 @@
 # $CODEX_THREAD_ID), because a child inherits its parent's variable. $COORD_SESSION_ID overrides it. The Stop hook
 # only blocks that session.
 # A new dispatch records base_sha (HEAD of its worktree) and branch. `--state accepted` is refused unless
-# `ready.sh --key <key>` has recorded a passing READY check for that dispatch.
+# `ready.sh --key <key>` has recorded a passing READY check for that dispatch, without --allow-pending, on its
+# current pr, paths and run_id, and on the PR's current head (read with gh). Changing pr, paths or run_id
+# clears the verdict.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "status.sh: not inside a git repository" >&2; exit 2; }
@@ -102,15 +104,10 @@ case "${1:-}" in
       [ -n "$base" ] || base=$(git -C "$gitdir" rev-parse HEAD 2>/dev/null || true)
       [ -n "$branch" ] || branch=$(git -C "$gitdir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     fi
-    final="${dstate:-$(jq -r '.state // "running"' <<<"$pj")}"
-    if [ "$final" = "accepted" ] && [ "$(jq -r '.ready.ok // false' <<<"$pj")" != "true" ]; then
-      echo "status.sh: refusing: dispatch \"$key\" has no passing READY check; run scripts/ready.sh --key $key first" >&2
-      exit 4
-    fi
-    write --arg k "$key" --arg st "$dstate" --arg wt "$wt" --arg p "$paths" --arg br "$branch" --arg bs "$base" \
+    rec=$(jq -c --arg st "$dstate" --arg wt "$wt" --arg p "$paths" --arg br "$branch" --arg bs "$base" \
           --arg run "$run" --arg pr "$pr" --arg note "$note" --arg t "$now" '
-      .dispatches = (.dispatches // {})
-      | .dispatches[$k] = ((.dispatches[$k] // {state:"running", dispatched_at:$t})
+      (. // {state:"running", dispatched_at:$t}) as $old
+      | ($old
           + (if $st != "" then {state:$st} else {} end)
           + (if $wt != "" then {worktree:$wt} else {} end)
           + (if $p != "" then {paths: ($p | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")))} else {} end)
@@ -119,7 +116,32 @@ case "${1:-}" in
           + (if $run != "" then {run_id:$run} else {} end)
           + (if $pr != "" then {pr:$pr} else {} end)
           + (if $note != "" then {note:$note} else {} end)
-          + {updated_at:$t})'
+          + {updated_at:$t})
+      # A READY verdict covers one PR, scope and run. Changing any of them clears it.
+      | if [.pr, .paths, .run_id] != [$old.pr, $old.paths, $old.run_id] then del(.ready) else . end' <<<"${prev:-null}")
+    if [ "$(jq -r .state <<<"$rec")" = "accepted" ]; then
+      refuse() { echo "status.sh: refusing: dispatch \"$key\" $*; run scripts/ready.sh --key $key first" >&2; exit 4; }
+      # owner/repo#N or a PR URL -> host owner repo number (the same forms ready.sh takes).
+      prparts() {
+        if [[ "$1" =~ ^https?://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+          echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]} ${BASH_REMATCH[4]}"
+        elif [[ "$1" =~ ^(([^/[:space:]]+\.[^/[:space:]]+)/)?([^/#[:space:]]+)/([^/#[:space:]]+)#([0-9]+)$ ]]; then
+          echo "${BASH_REMATCH[2]:-${GH_HOST:-github.com}} ${BASH_REMATCH[3]} ${BASH_REMATCH[4]} ${BASH_REMATCH[5]}"
+        fi
+      }
+      [ "$(jq -r '.ready.ok // false' <<<"$rec")" = "true" ] || refuse "has no passing READY check"
+      [ "$(jq -r '.ready.allow_pending // false' <<<"$rec")" = "false" ] || refuse "READY passed only with --allow-pending"
+      [ "$(jq -r '[(.paths // []), .run_id] == [(.ready.paths // []), .ready.run]' <<<"$rec")" = "true" ] \
+        || refuse "READY checked another --paths scope or run"
+      want=$(prparts "$(jq -r '.pr // empty' <<<"$rec")"); got=$(prparts "$(jq -r '.ready.pr // empty' <<<"$rec")")
+      [ -n "$want" ] && [ "$want" = "$got" ] || refuse "READY checked another PR than the dispatch PR"
+      read -r h o r n <<<"$want"
+      # A merged PR keeps its last head in head.sha, so this also binds a verdict taken before the merge.
+      cur=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n" --jq '.head.sha' 2>/dev/null) || cur=""
+      [ -n "$cur" ] || refuse "PR head is unreadable, so the READY head cannot be confirmed"
+      [ "$cur" = "$(jq -r '.ready.head // empty' <<<"$rec")" ] || refuse "PR head moved to ${cur:0:9} after READY"
+    fi
+    write --arg k "$key" --argjson rec "$rec" '.dispatches = (.dispatches // {}) | .dispatches[$k] = $rec'
     jq -r --arg k "$key" '.dispatches[$k] | "dispatch \($k): \(.state)\(if .base_sha then " base \(.base_sha[0:9])" else "" end)"' "$file"
     ;;
   *)

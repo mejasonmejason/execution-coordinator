@@ -9,13 +9,27 @@
 # WARN: failing non-required checks; unreadable required-check list (then every check counts as required); deleted
 #   tests; changed CI, test or lint config; head not descending from --base-sha.
 # --key K reads pr, paths and base_sha from dispatch K in <git root>/.coordinator/status.json (scripts/status.sh)
-#   and records the verdict there, which `status.sh dispatch K --state accepted` requires.
+#   and records the verdict there with the PR, head, paths, --allow-pending and run_id it covered, which
+#   `status.sh dispatch K --state accepted` requires. An unreadable check (exit 3) records ok=false.
 # Output: "READY|NOT READY <url> @ <sha9>", then "  BLOCK ..." and "  WARN ..." lines. Exit 0 READY, 1 NOT READY,
 # 3 unreadable (never treat 3 as READY).
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-unreadable() { echo "UNREADABLE ${ref:-?}: $*" >&2; exit 3; }
+# record VERDICT_JSON: store the verdict on dispatch $key. Sets the dispatch PR only when it has none.
+record() {
+  [ -n "${sfile:-}" ] && [ -n "${d:-}" ] || return 0
+  local stmp; stmp=$(mktemp "$(dirname "$sfile")/.status.XXXXXX") || return 0
+  if jq --arg k "$key" --argjson v "$1" '.dispatches[$k].pr //= $v.pr | .dispatches[$k].ready = $v' \
+       "$sfile" > "$stmp"; then mv "$stmp" "$sfile"; else rm -f "$stmp"; fi
+}
+# An unreadable check replaces any earlier verdict for the dispatch, so an old pass never survives it.
+unreadable() {
+  echo "UNREADABLE ${ref:-?}: $*" >&2
+  record "$(jq -cn --arg why "$*" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{ok: false, unreadable: true, at: $t, blockers: ["unreadable: \($why)"]}')"
+  exit 3
+}
 need() { [ "$1" -ge 2 ] || { echo "ready.sh: $2 needs a value" >&2; exit 3; }; }
 
 ref="" sha="" paths="" base_sha="" key="" allow_pending=0 json=0
@@ -33,7 +47,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-sfile=""
+sfile="" d="" run=""
 if [ -n "$key" ]; then
   root=$(git rev-parse --show-toplevel 2>/dev/null) || unreadable "--key needs to run inside the coordinated git repository"
   sfile="$root/.coordinator/status.json"
@@ -42,6 +56,7 @@ if [ -n "$key" ]; then
   [ -n "$ref" ] || ref=$(jq -r '.pr // empty' <<<"$d")
   [ -n "$paths" ] || paths=$(jq -r '(.paths // []) | join(",")' <<<"$d")
   [ -n "$base_sha" ] || base_sha=$(jq -r '.base_sha // empty' <<<"$d")
+  run=$(jq -r '.run_id // empty' <<<"$d")
 fi
 
 host="${GH_HOST:-github.com}"
@@ -165,12 +180,10 @@ result=$(jq -Rn --slurpfile pr "$tmp/pr" --arg url "$url" --arg t "$(date -u +%Y
       warnings: ($v | map(select(startswith("W ")) | .[2:])), checked_at: $t }' < "$tmp/v")
 ok=$(jq -r '.ok' <<<"$result")
 
-if [ -n "$sfile" ]; then
-  stmp=$(mktemp "$(dirname "$sfile")/.status.XXXXXX")
-  if jq --arg k "$key" --argjson r "$result" \
-       '.dispatches[$k] += {pr: $r.pr, ready: {ok: $r.ok, head: $r.head, at: $r.checked_at, blockers: $r.blockers}}' \
-       "$sfile" > "$stmp"; then mv "$stmp" "$sfile"; else rm -f "$stmp"; fi
-fi
+# The verdict names what it covered: PR, head, --paths scope, --allow-pending and the dispatch run.
+record "$(jq -c --arg p "$paths" --argjson ap "$allow_pending" --arg run "$run" '
+  {ok, pr, head, paths: ($p | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))),
+   allow_pending: ($ap == 1), run: (if $run == "" then null else $run end), at: .checked_at, blockers}' <<<"$result")"
 
 if [ "$json" -eq 1 ]; then
   echo "$result"
