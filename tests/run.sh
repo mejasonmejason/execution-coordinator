@@ -629,6 +629,8 @@ grep -q "check misread, verified green" "$R/.coordinator/overrides.log"; t $? 0 
 # Issue #23: gh flags before `pr`/`merge` must not skip READY, and override text inside an argument is not an override.
 fixtures; echo '[]' > "$STUB_DIR/files.json"; setj pr.json '.mergeable_state = "dirty"'
 gr() { g "$1" "$R"; t $? 2 "gate: $2 is checked"; has "$(cat "$BIN/gate.err")" "merge conflicts with base" "gate: $2 reached READY"; }
+# A merge the gate cannot place blocks with the top-level message, override or not.
+gn() { g "$1" "$R"; t $? 2 "gate: $2 blocks"; has "$(cat "$BIN/gate.err")" "as its own top-level command" "gate: $2 gets the top-level message"; }
 gr "gh --repo o/r pr merge $U --squash" "gh --repo o/r pr merge"
 gr "gh -R o/r pr merge $U --squash" "gh -R o/r pr merge"
 gr "gh --repo=o/r pr merge $U --squash" "gh --repo=o/r pr merge"
@@ -644,7 +646,7 @@ grep -q "env form ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: leading ove
 g "COORD_READY_OVERRIDE=\"continued line ok\" \\
   gh pr merge $U --squash" "$R"; t $? 0 "gate: leading override with a line continuation allowed"
 g "gh --verbose pr merge $U --squash" "$R"; t $? 2 "gate: unknown gh flag before pr fails closed"
-has "$(cat "$BIN/gate.err")" "ould not parse" "gate: unknown gh flag reason on stderr"
+has "$(cat "$BIN/gate.err")" "as its own top-level command" "gate: unknown gh flag reason on stderr"
 g "bash -c \"gh -R o/r pr merge 7\"" "$R"; t $? 2 "gate: merge inside a quoted bash -c fails closed"
 g "gh pr list --search merge && gh pr view 5 && git merge main" "$R"; t $? 0 "gate: non-merge commands that mention merge allowed"
 # PR #41 review: newlines between the words, a command substitution or variable as the command, and a subshell.
@@ -652,12 +654,12 @@ g "gh
 pr merge $U" "$R"; t $? 2 "gate: newline between gh and pr fails closed"
 g "gh pr
 merge $U" "$R"; t $? 2 "gate: newline between pr and merge fails closed"
-gr "\$(echo gh) pr merge $U" "\$(echo gh) pr merge"
-gr "\`echo gh\` pr merge $U" "backtick echo gh pr merge"
+gn "\$(echo gh) pr merge $U" "\$(echo gh) pr merge"
+gn "\`echo gh\` pr merge $U" "backtick echo gh pr merge"
 g "\$GH -R o/r pr merge $U" "$R"; t $? 2 "gate: variable in command position with pr merge fails closed"
-has "$(cat "$BIN/gate.err")" "ould not parse" "gate: variable in command position reason on stderr"
+has "$(cat "$BIN/gate.err")" "as its own top-level command" "gate: variable in command position reason on stderr"
 g "\$GH pr list --search merge" "$R"; t $? 0 "gate: variable in command position without pr merge allowed"
-gr "(gh pr merge $U --squash)" "subshell (gh pr merge)"
+gn "(gh pr merge $U --squash)" "subshell (gh pr merge)"
 g 'git commit -m "gh pr merge"' "$R"; t $? 2 "gate: quoted gh pr merge text still fails closed"
 # PR #41 Codex review: env options before the override assignment.
 g "env -i COORD_READY_OVERRIDE=\"env i ok\" gh pr merge $U" "$R"; t $? 0 "gate: override after env -i allowed"
@@ -666,7 +668,7 @@ g "env -- COORD_READY_OVERRIDE=\"env dashdash ok\" gh pr merge $U" "$R"; t $? 0 
 grep -q "env dashdash ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: override after env -- logged"
 g "env -u FOO --unset=BAR -C /tmp --chdir=/tmp COORD_READY_OVERRIDE=\"env opts ok\" gh pr merge $U" "$R"; t $? 0 "gate: override after env -u/-C allowed"
 grep -q "env opts ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: override after env -u/-C logged"
-gr "env -S x COORD_READY_OVERRIDE=\"split no\" gh pr merge $U" "override after env -S (not honored)"
+gn "env -S x COORD_READY_OVERRIDE=\"split no\" gh pr merge $U" "override after env -S (not honored)"
 grep -q "split no" "$R/.coordinator/overrides.log"; t $? 1 "gate: override after env -S not logged"
 # PR #41 second review.
 gr "gh pr merge $U # it's ready
@@ -694,12 +696,21 @@ fixtures; echo '[]' > "$STUB_DIR/files.json"; setj runs.json '.check_runs[0].sta
 g "gh pr merge $U --subject --auto" "$R"; t $? 2 "gate: --auto as the value of --subject does not allow pending checks"
 # PR #41 Codex review at 8054d11: every merge in one command, and no override across a substitution.
 fixtures; echo '[]' > "$STUB_DIR/files.json"
-g "echo \$(gh pr merge $U) \$(gh pr merge 9)" "$R"; t $? 2 "gate: the second merge in one command is checked"
-has "$(cat "$BIN/gate.err")" "could not resolve" "gate: the second merge in one command reached its own check"
+gn "echo \$(gh pr merge $U) \$(gh pr merge 9)" "two merges in substitutions"
 g "echo \$(gh pr merge 9) \$(gh pr merge $U --disable-auto)" "$R"; t $? 2 "gate: --disable-auto of a later merge does not cover an earlier one"
 setj pr.json '.mergeable_state = "dirty"'
-gr "COORD_READY_OVERRIDE=\"outer only\" \$(gh pr merge $U)" "a merge in \$(...) after an outer override"
+gn "COORD_READY_OVERRIDE=\"outer only\" \$(gh pr merge $U)" "a merge in \$(...) after an outer override"
 grep -q "outer only" "$R/.coordinator/overrides.log"; t $? 1 "gate: an outer override does not cover a merge in \$(...)"
+# PR #41 Codex review at 51f7e0e: nested merges fail closed; selectors keep their characters. READY passes here.
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+gn "echo \$(gh pr merge $U) --disable-auto" "an outer --disable-auto after \$(gh pr merge)"
+gn "echo \$(g\\h pr merge $U) \$(bash -c \"gh pr merge 9\")" "an escaped gh next to a quoted merge"
+gn "(COORD_READY_OVERRIDE=\"inner\" gh pr merge $U)" "an override inside the merge subshell"
+grep -q "inner" "$R/.coordinator/overrides.log"; t $? 1 "gate: an override inside a subshell is not logged"
+STUB_PRVIEW=1 g "gh pr merge 'feature)' --squash" "$R"
+has "$(cat "$BIN/gate.err")" "pull/feature)" "gate: a quoted selector keeps its closing parenthesis"
+g "gh pr merge $U && gh pr merge 9" "$R"; t $? 2 "gate: two top-level merges are each checked"
+has "$(cat "$BIN/gate.err")" "could not resolve" "gate: the second top-level merge reached its own check"
 fixtures; echo '[]' > "$STUB_DIR/files.json"
 g "gh pr merge --squash" "$NR"; t $? 2 "gate: unresolvable merge in a non-repo directory fails closed"
 has "$(cat "$BIN/gate.err")" "could not resolve" "gate: unresolvable reason on stderr"
