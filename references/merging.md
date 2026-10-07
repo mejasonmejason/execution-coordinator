@@ -41,6 +41,8 @@ It warns on failing non-required checks, deleted tests, changed CI, test or lint
 
 `hooks/claude-merge-gate.sh` is a PreToolUse hook for Claude Code and Codex. On `gh pr merge` or a REST merge, it runs `scripts/ready.sh` on the current head and fails closed. `--auto` permits pending checks. Other harnesses run `scripts/ready.sh` themselves before merging.
 
+The gate checks a merge only when the merge is its own top-level command, optionally after variable assignments or `env`. It blocks nested forms (`$(...)`, backticks, subshells, `bash -c`, `eval`, `xargs`), `command`/`time`/`sudo` prefixes and merge text inside the arguments of another command, and no override applies to them.
+
 Override only a blocker you have verified is wrong: prefix the command with `COORD_READY_OVERRIDE="<reason>"`. The override is logged in `.coordinator/overrides.log`. Disclose it in your next report, because an undisclosed override hides a skipped gate.
 
 ## Get reviews
