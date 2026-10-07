@@ -130,6 +130,11 @@ expect 1 "balanced parentheses in a link target" "append SKILL.md 'See [x](refer
 expect 1 "root-relative link target" "append SKILL.md 'See [x](/scripts/ready.sh).'" "SKILL.md links to /scripts/ready.sh, an absolute path"
 expect 1 "quoted value that starts on the next line" "set_compat 'compatibility:' \"  \\\"\$(x600)\\\"\"" "compatibility is 600"
 expect 0 "trailing spaces after a closing quote" "set_compat \"compatibility: 'Needs git.'   \""
+# PR #38 Codex review, round 3: typed YAML values and escaped parentheses.
+expect 1 "compatibility YAML boolean" "set_compat 'compatibility: true'" "compatibility must be a quoted or plain text value"
+expect 1 "description YAML number" "sedi -E 's/^(description:).*/\\1 1.5/' SKILL.md" "description must be a quoted or plain text value"
+expect 0 "quoted YAML boolean is text" "set_compat \"compatibility: 'true'\""
+expect 1 "escaped parenthesis in a link target" "append SKILL.md 'See [broken](docs/nope\\(v1.md).'" "SKILL.md links to docs/nope(v1.md, which does not exist"
 expect 1 "README test count wrong" "sedi -E 's/(bash tests\\/run\\.sh +# )[0-9]+/\\199/' README.md" "README.md says 99 cases"
 
 echo "TOTAL pass=$pass fail=$fail"

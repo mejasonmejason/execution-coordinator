@@ -45,6 +45,20 @@ class Unsupported(Exception):
     pass
 
 
+class NotText(Exception):
+    pass
+
+
+# Unquoted values that a YAML loader reads as a boolean, number or date, not as text (YAML 1.1 and 1.2 core schema).
+TYPED_PLAIN = re.compile(r"""(?x)
+    true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF
+  | [-+]?(?:0|[1-9][0-9_]*)(?::[0-5]?[0-9])* | [-+]?0[0-7_]+ | 0o[0-7]+ | 0x[0-9a-fA-F_]+ | 0b[01_]+
+  | [-+]?(?:\.[0-9]+|[0-9][0-9_]*(?:\.[0-9_]*)?)(?:[eE][-+]?[0-9]+)? | [-+]?\.(?:inf|Inf|INF) | \.(?:nan|NaN|NAN)
+  | [0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:(?:[Tt]|[ \t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?
+        (?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?)?
+""")
+
+
 def fold_flow(lines):
     """Fold the lines of a multi-line plain or quoted scalar: one line break is a space, each blank line is a newline."""
     out, blanks = "", 0
@@ -232,6 +246,8 @@ def scalar(key):
     if not rest and cont:
         plain = plain[1:]
     value = fold_flow(plain).strip()
+    if TYPED_PLAIN.fullmatch(value):
+        raise NotText(value)
     return "" if value in ("~", "null", "Null", "NULL") else value
 
 
@@ -241,6 +257,9 @@ def field(key):
         return scalar(key) or ""
     except Unsupported as e:
         errors.append(f"{key} uses an unsupported YAML form ({e}); use a plain, quoted, | or > scalar")
+        return ""
+    except NotText as e:
+        errors.append(f"{key} must be a quoted or plain text value: YAML reads {e} as a boolean, number or date")
         return ""
 
 
@@ -278,7 +297,7 @@ for label, got, limit in (("lines", n_lines, 500), ("words", n_words, 5000), ("c
 # references/ is one level deep and every file in it is linked from SKILL.md. Code (fenced, indented or in a code
 # span), HTML comments, footnote definitions and an escaped \[ are not links.
 LINK_TEXT = r"(?:[^\[\]\\]|\\.|\[(?:[^\[\]\\]|\\.)*\])*"  # one level of nested brackets, as in [![badge](img)](x)
-INLINE_LINK = re.compile(r"\[" + LINK_TEXT + r"\]\(\s*(<[^>\n]*>|(?:[^()\s]|\([^()\s]*\))+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+INLINE_LINK = re.compile(r"\[" + LINK_TEXT + r"\]\(\s*(<[^>\n]*>|(?:\\.|[^()\s\\]|\((?:\\.|[^()\s\\])*\))+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
 REF_DEF = re.compile(r"^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(<[^>\n]*>|\S+)", re.M)
 CODE_SPAN = re.compile(r"(`+)(?!`)(?:(?!\n[ \t]*\n).)*?(?<!`)\1(?!`)", re.S)  # never across a blank line
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
