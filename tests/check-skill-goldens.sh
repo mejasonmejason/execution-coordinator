@@ -61,6 +61,34 @@ expect 1 "default_prompt over 200 characters" "sedi -E \"s/(default_prompt: \\\"
 expect 1 "default_prompt with two sentences" "sedi -E 's/(default_prompt: \"[^\"]*)\"/\\1 Then stop.\"/' agents/openai.yaml" "single sentence"
 expect 1 "compatibility over 500 characters" "sedi -E \"s/^(compatibility: ).*/\\1\$(printf 'x%.0s' \$(seq 501))/\" SKILL.md" "compatibility is 501"
 expect 1 "compatibility empty" "sedi -E 's/^(compatibility:).*/\\1/' SKILL.md" "compatibility is empty"
+# Block-scalar compatibility values (#26): the checker must measure the whole value, not the first line.
+set_compat() {  # set_compat <line>...: replace the compatibility line of SKILL.md with the given lines
+  python3 -c '
+import re, sys
+s = open("SKILL.md").read()
+s = re.sub(r"^compatibility:.*\n", lambda m: "".join(a + "\n" for a in sys.argv[1:]), s, count=1, flags=re.M)
+open("SKILL.md", "w").write(s)
+' "$@"
+}
+long_block() {  # long_block <indicator>: a block scalar of six 99-character lines (each line alone is under 500)
+  local l; l=$(printf 'y%.0s' $(seq 99))
+  set_compat "compatibility: $1" "  $l" "  $l" "  $l" "  $l" "  $l" "" "  $l"
+}
+expect 1 "compatibility folded block over 500" "long_block '>'" "compatibility is 600"
+expect 1 "compatibility folded strip block over 500" "long_block '>-'" "compatibility is 599"
+expect 1 "compatibility literal block over 500" "long_block '|'" "compatibility is 601"
+expect 1 "compatibility literal strip block over 500" "long_block '|-'" "compatibility is 600"
+expect 0 "compatibility short folded block passes" "set_compat 'compatibility: >-' '  Needs git' '  and gh.'"
+expect 1 "compatibility double-quoted over 500" "set_compat \"compatibility: \\\"\$(printf 'x%.0s' \$(seq 501))\\\"\"" "compatibility is 501"
+expect 1 "compatibility single-quoted multi-line over 500" "set_compat \"compatibility: '\$(printf 'x%.0s' \$(seq 300))\" \"  \$(printf 'z%.0s' \$(seq 300))'\"" "compatibility is 601"
+expect 1 "compatibility unsupported flow form" "set_compat 'compatibility: [git, gh]'" "compatibility uses an unsupported YAML form"
+expect 1 "compatibility unsupported tag" "set_compat 'compatibility: !!str >' '  Needs git.'" "compatibility uses an unsupported YAML form"
+# Every local Markdown link in SKILL.md and references/*.md must resolve (#26). Inline code is not a link.
+append() { local f="$1"; shift; printf '%s\n' "$@" >> "$f"; }
+expect 1 "SKILL.md link to a missing script" "append SKILL.md 'Run [it](scripts/not-a-file.sh).'" "SKILL.md links to scripts/not-a-file.sh, which does not exist"
+expect 1 "reference link to a missing file" "append references/detail.md 'See [x](../scripts/gone.sh#top).'" "references/detail.md links to scripts/gone.sh, which does not exist"
+expect 1 "reference-style link to a missing file" "append SKILL.md '' '[ref]: docs/nope.md'" "SKILL.md links to docs/nope.md, which does not exist"
+expect 0 "inline code, URLs and anchors are not checked as files" "append SKILL.md 'Run \`scripts/not-a-file.sh\` or \`[a](nope.md)\`.' 'See [web](https://example.com/x), [mail](mailto:a@b.c), [top](#execution-coordinator), [ready](scripts/ready.sh#usage \"Ready\").' '' '\`\`\`' '[fenced](scripts/nope.sh)' '\`\`\`'"
 expect 1 "README test count wrong" "sedi -E 's/(bash tests\\/run\\.sh +# )[0-9]+/\\199/' README.md" "README.md says 99 cases"
 
 echo "TOTAL pass=$pass fail=$fail"
