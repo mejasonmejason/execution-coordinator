@@ -41,7 +41,7 @@ Every merge to `main` runs `.github/workflows/skill.yml`. It runs the tests and 
 ## Test
 
 ```bash
-bash tests/run.sh   # 396 cases, offline; exit 0 when all pass
+bash tests/run.sh   # 442 cases, offline; exit 0 when all pass
 ```
 
 Run the suite before and after every change. A rule that a script can enforce gets a test case.
