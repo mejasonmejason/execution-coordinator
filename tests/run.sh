@@ -350,6 +350,11 @@ jq -n --arg b "$CS" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 0 "summary: REST fallback Completed summary for the head is INFO"
 jq -n --arg b "${CS/\`abc1234\`/\`b199446\`}" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n9",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "summary: REST fallback Completed summary for an older commit is ACTION"
+# REST fallback with more than 128 KB of comment text: jq once got it as one argument and failed (E2BIG)
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
+python3 -c 'import json,sys; json.dump([{"user":{"login":"alex"},"body":"x"*200000,"html_url":"n9","created_at":"2026-01-01T00:00:00Z"}], open(sys.argv[1],"w"))' "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U" 2>&1); t $? 1 "threads: REST fallback reads a PR with over 128 KB of comments"
+has "$out" "ACTION    PR comment by alex: n9" "threads: the large comment is reported"
 # an empty, whitespace-only or pullRequest-less response is unreadable (exit 3), never OK, never READY
 for body in '' '   
   ' '{"data":{"repository":{"pullRequest":null}}}' '{"data":{"viewer":{"login":"me"}}}' '{}'; do
