@@ -29,7 +29,7 @@ A timeout, a CLI error or an unparsable grade counts as a FAIL and is marked as 
 whose "assertion" texts do not match the expectations, in order, is also a grader error.
 
 HOME isolation (default on): `claude -p` runs with an empty temp HOME and without
-CLAUDE_CODE_SYNC_SKILLS, so a user-level CLAUDE.md, settings or installed skill cannot affect the
+CLAUDE_CODE_SYNC_SKILLS or CLAUDE_CONFIG_DIR, so a user-level CLAUDE.md, settings or installed skill cannot affect the
 results. Auth must then come from the environment (for example ANTHROPIC_API_KEY or
 CLAUDE_CODE_OAUTH_TOKEN). --no-isolate-home keeps the real HOME; behavior.json records
 "home_isolated" and summary.md labels the run.
@@ -139,6 +139,7 @@ class Claude:
         self.env = {k: v for k, v in os.environ.items() if k not in drop}
         if isolate_home:
             self.env.pop("CLAUDE_CODE_SYNC_SKILLS", None)
+            self.env.pop("CLAUDE_CONFIG_DIR", None)  # it would point claude back at the user's config
             self.env["HOME"] = tempfile.mkdtemp(prefix="ec-evals-home-")
             atexit.register(shutil.rmtree, self.env["HOME"], True)
 
@@ -279,6 +280,7 @@ def load_skill(skill_md: Path) -> str:
     return "\n\n".join(parts)
 
 
+MISMATCH = "names another assertion"  # parse_grades reason for a grade of the wrong assertion
 _QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
                          "\u2013": "-", "\u2014": "-"})
 
@@ -310,24 +312,31 @@ def parse_grades(text: str, expectations: list[str]) -> tuple[list[dict] | None,
         if not isinstance(g, dict) or not isinstance(g.get("pass"), bool):
             return None, f"grade {i} has no boolean pass"
         if norm_assertion(g.get("assertion", "")) != norm_assertion(exp):
-            return None, f"grade {i} names another assertion: {str(g.get('assertion', ''))[:120]!r}"
+            return None, f"grade {i} {MISMATCH}: {str(g.get('assertion', ''))[:120]!r}"
         out.append({"text": exp, "passed": g["pass"], "evidence": str(g.get("evidence", "")), "status": "ok"})
     return out, ""
 
 
 def grade(claude: Claude, grader_model: str | None, prompt: str, answer: str,
           expectations: list[str]) -> dict:
+    """Grade one answer. "raw" holds the grader's text from every attempt. A reply that grades
+    another assertion is asked again once; a second mismatch is a grader error."""
     listing = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(expectations))
-    r = claude.ask(GRADER_TEMPLATE.format(prompt=prompt, answer=answer, expectations=listing,
-                                          n=len(expectations)), model=grader_model)
-    grades, why = parse_grades(r["text"], expectations) if r["status"] == "ok" else (None, "")
+    question = GRADER_TEMPLATE.format(prompt=prompt, answer=answer, expectations=listing, n=len(expectations))
+    raws: list[str] = []
+    for attempt in (1, 2):
+        r = claude.ask(question, model=grader_model)
+        raws.append(r["text"])
+        grades, why = parse_grades(r["text"], expectations) if r["status"] == "ok" else (None, "")
+        if grades is not None or MISMATCH not in why:
+            break
     if grades is None:
         status = r["status"] if r["status"] != "ok" else "unparsable"
         detail = why or r["detail"] or r["text"][:200]
         grades = [{"text": e, "passed": False, "evidence": f"GRADER {status}: {detail}",
                    "status": "grader_error"} for e in expectations]
-        return {"status": status, "expectations": grades, "raw": r["text"]}
-    return {"status": "ok", "expectations": grades, "raw": r["text"]}
+        return {"status": status, "expectations": grades, "raw": raws, "attempts": attempt}
+    return {"status": "ok", "expectations": grades, "raw": raws, "attempts": attempt}
 
 
 def summarize(exps: list[dict]) -> dict:
@@ -442,6 +451,7 @@ def main() -> int:
         else:
             g = grade(claude, args.grader_model, e["prompt"], r["text"], exps_of(e))
             row["expectations"], row["grader_status"] = g["expectations"], g["status"]
+            row["grader_raw"], row["grader_attempts"] = g["raw"], g["attempts"]
         row["summary"] = summarize(row["expectations"])
         row["all_passed"] = row["summary"]["failed"] == 0
         opened_note = (f", opened {', '.join(reads['references_opened']) or 'no references'}"
@@ -459,7 +469,8 @@ def main() -> int:
         graded_ok = g["status"] == "ok"
         key_failed = graded_ok and all(not g["expectations"][i]["passed"] for i in keys)
         row = {"id": e["id"], "name": e["name"], "golden_file": str(path.relative_to(evals_dir)),
-               "grader_status": g["status"], "expectations": g["expectations"],
+               "grader_status": g["status"], "grader_raw": g["raw"], "grader_attempts": g["attempts"],
+               "expectations": g["expectations"],
                "summary": summarize(g["expectations"]), "key_expectations": keys,
                # A golden is caught when the grade is readable and every key expectation fails.
                "golden_caught": key_failed}

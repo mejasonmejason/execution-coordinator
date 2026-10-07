@@ -21,6 +21,10 @@ jobs:
       - name: Test suite
         run: bash tests/run.sh
 
+      # Offline tests for the eval runners (fake claude CLI, fake skill-creator; no network, no model).
+      - name: Eval runner tests
+        run: python3 evals/test_evals.py
+
       - name: Upload rules
         run: python3 scripts/check-skill.py
 

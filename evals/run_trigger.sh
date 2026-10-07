@@ -15,15 +15,17 @@
 # invalid (for example an auth error or an unknown model), and its numbers must not be quoted.
 #
 # Isolation (default on, COORD_EVAL_ISOLATE_HOME=0 turns it off): `claude -p` runs with an empty HOME
-# and without CLAUDE_CODE_SYNC_SKILLS, so an installed copy of execution-coordinator cannot compete
-# with the description under test. Turn it off only where auth needs the real HOME, and then check
-# that no execution-coordinator skill is installed, or the results are wrong.
+# and without CLAUDE_CODE_SYNC_SKILLS or CLAUDE_CONFIG_DIR, so an installed copy of
+# execution-coordinator cannot compete with the description under test. Turn it off only where
+# auth needs the real HOME, and then check that no execution-coordinator skill is installed, or the
+# results are wrong.
 #
-# Output: <out>/trigger.json (run_eval.py output, regraded), <out>/trigger-summary.md and
-# <out>/trigger-outcomes.jsonl (one line per `claude -p` call).
+# Output: <out>/trigger-raw.json (run_eval.py output, before grading), <out>/trigger.json (graded;
+# written only once grading finishes), <out>/trigger-summary.md and <out>/trigger-outcomes.jsonl
+# (one line per `claude -p` call). No graded call at all (every call timed out) also exits 1.
 set -euo pipefail
 
-usage() { sed -n '2,23p' "$0"; exit 2; }
+usage() { sed -n '2,25p' "$0"; exit 2; }
 [ $# -ge 2 ] || usage
 skill=$1 out=$2; shift 2
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -57,16 +59,17 @@ trap 'rm -rf "$proj"' EXIT
 env_args=(-u CLAUDECODE -u CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD -u CLAUDE_ADDITIONAL_DIRECTORIES)
 if [ "${COORD_EVAL_ISOLATE_HOME:-1}" = 1 ]; then
   mkdir -p "$proj/home"
-  env_args+=(-u CLAUDE_CODE_SYNC_SKILLS "HOME=$proj/home")
+  env_args+=(-u CLAUDE_CODE_SYNC_SKILLS -u CLAUDE_CONFIG_DIR "HOME=$proj/home")
 fi
 model_args=(); [ -n "$model" ] && model_args=(--model "$model")
 
+rm -f "$out/trigger.json" "$out/trigger-raw.json"
 : > "$out/trigger-outcomes.jsonl"
 start=$(date -u +%Y-%m-%dT%H:%M:%SZ); t0=$(date +%s)
 (cd "$proj" && env "${env_args[@]}" COORD_TRIGGER_OUTCOME_LOG="$out/trigger-outcomes.jsonl" \
   PYTHONPATH="$SC:$here" python3 -c 'import sys, trigger_shim; sys.argv[0] = "run_eval"; trigger_shim.main()' \
   --eval-set "$queries" --skill-path "$skill" --runs-per-query "$runs" \
-  --num-workers "$workers" --timeout "$timeout" "${model_args[@]}" --verbose) > "$out/trigger.json"
+  --num-workers "$workers" --timeout "$timeout" "${model_args[@]}" --verbose) > "$out/trigger-raw.json"
 secs=$(( $(date +%s) - t0 ))
 
-python3 "$here/trigger_grade.py" "$out/trigger.json" "$out/trigger-summary.md" "$skill/SKILL.md" "$start" "$secs" "${model:-cli-default}" "$runs" "$out/trigger-outcomes.jsonl" "${COORD_EVAL_ISOLATE_HOME:-1}"
+python3 "$here/trigger_grade.py" "$out/trigger-raw.json" "$out/trigger.json" "$out/trigger-summary.md" "$skill/SKILL.md" "$start" "$secs" "${model:-cli-default}" "$runs" "$out/trigger-outcomes.jsonl" "${COORD_EVAL_ISOLATE_HOME:-1}"

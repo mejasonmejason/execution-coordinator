@@ -1,6 +1,7 @@
 """Grade a trigger run from the per-call outcome log. Called by run_trigger.sh.
 
-  trigger_grade.py <trigger.json> <summary.md> <SKILL.md> <start> <secs> <model> <runs> <outcomes.jsonl> <isolate 1|0>
+  trigger_grade.py <trigger-raw.json> <trigger.json> <summary.md> <SKILL.md> <start> <secs> <model> <runs>
+                   <outcomes.jsonl> <isolate 1|0>
 
 Upstream run_eval.py counts every failed `claude -p` call as "not triggered". This script ignores
 upstream's trigger counts and pass flags and rebuilds them from trigger_shim.py's outcome log:
@@ -8,7 +9,11 @@ upstream's trigger counts and pass flags and rebuilds them from trigger_shim.py'
 - Only "success" calls are graded. The trigger rate is triggers / successful runs.
 - A query with an "error" call (or a run with no outcome line) is ERROR. A query with a "timeout"
   call is INCONCLUSIVE. Neither passes, and neither counts as a false trigger.
-- Exit 1 when any call errored: the run is invalid and its numbers must not be quoted.
+- Call-level rates (hit rate, false-trigger rate) use every successful call, also those of an
+  inconclusive query. Query-level precision and recall use only conclusive queries.
+- A rate with no graded call is None in trigger.json and "n/a" in the summary.
+- Exit 1 when any call errored or no call was graded: the run is invalid and its numbers must not
+  be quoted. trigger.json is written from trigger-raw.json only once grading has finished.
 """
 from __future__ import annotations
 
@@ -56,50 +61,70 @@ def verdict(r: dict) -> str:
         "PASS" if r["pass"] else "FAIL"
 
 
+def rate(num: int, den: int) -> float | None:
+    return num / den if den else None
+
+
+def pct(x: float | None) -> str:
+    return "n/a" if x is None else f"{x:.0%}"
+
+
+def num(x: float | None) -> str:
+    return "n/a" if x is None else f"{x:.2f}"
+
+
 def main(argv: list[str]) -> int:
-    path, md, skill_md, start, secs, model, runs, olog, isolate = argv
-    d = json.load(open(path))
+    raw, path, md, skill_md, start, secs, model, runs, olog, isolate = argv
+    d = json.load(open(raw))
     rs = d["results"]
     regrade(rs, read_outcomes(olog))
-    graded = [r for r in rs if not r.get("error") and not r.get("inconclusive")]
+    conclusive = [r for r in rs if not r.get("error") and not r.get("inconclusive")]
     errored = sum(1 for r in rs if r.get("error"))
     inconclusive = sum(1 for r in rs if r.get("inconclusive"))
     error_calls = sum(r["errors"] for r in rs)
+    graded_calls = sum(r["graded_runs"] for r in rs)
+    valid = error_calls == 0 and graded_calls > 0
     d["summary"] = {"total": len(rs), "passed": sum(1 for r in rs if r["pass"]),
                     "errored": errored, "inconclusive": inconclusive,
                     "error_calls": error_calls, "timeout_calls": sum(r["timeouts"] for r in rs),
-                    "valid": error_calls == 0}
+                    "graded_calls": graded_calls, "valid": valid}
     d["summary"]["failed"] = len(rs) - d["summary"]["passed"]
-    pos = [r for r in graded if r["should_trigger"]]
-    neg = [r for r in graded if not r["should_trigger"]]
+    # Query level: conclusive queries only. Call level: every successful call.
+    pos = [r for r in conclusive if r["should_trigger"]]
+    neg = [r for r in conclusive if not r["should_trigger"]]
     n_pos = sum(1 for r in rs if r["should_trigger"])
     n_neg = len(rs) - n_pos
     tp = sum(1 for r in pos if r["pass"])
     fp = sum(1 for r in neg if not r["pass"])
     tn = sum(1 for r in neg if r["pass"])
     calls = sum(r["runs"] for r in rs)
-    prec = tp / (tp + fp) if tp + fp else 0.0
-    rec = tp / n_pos if n_pos else 0.0
-    pos_rate = sum(r["triggers"] for r in pos) / max(1, sum(r["graded_runs"] for r in pos))
-    neg_rate = sum(r["triggers"] for r in neg) / max(1, sum(r["graded_runs"] for r in neg))
+    prec = rate(tp, tp + fp)
+    rec = rate(tp, len(pos))
+    all_pos = [r for r in rs if r["should_trigger"]]
+    all_neg = [r for r in rs if not r["should_trigger"]]
+    pos_rate = rate(sum(r["triggers"] for r in all_pos), sum(r["graded_runs"] for r in all_pos))
+    neg_rate = rate(sum(r["triggers"] for r in all_neg), sum(r["graded_runs"] for r in all_neg))
+    r3 = lambda x: None if x is None else round(x, 3)  # noqa: E731
     d["meta"] = {"skill_md": skill_md, "skill_sha256": hashlib.sha256(open(skill_md, "rb").read()).hexdigest(),
                  "started_utc": start, "seconds": int(secs), "model": model, "runs_per_query": int(runs),
                  "home_isolated": isolate == "1",
-                 "claude_calls": calls, "error_calls": error_calls, "errored_queries": errored,
-                 "inconclusive_queries": inconclusive, "precision": round(prec, 3), "recall": round(rec, 3),
-                 "should_trigger_hit_rate": round(pos_rate, 3), "should_not_false_trigger_rate": round(neg_rate, 3)}
-    json.dump(d, open(path, "w"), indent=2)
+                 "claude_calls": calls, "graded_calls": graded_calls, "error_calls": error_calls,
+                 "errored_queries": errored, "inconclusive_queries": inconclusive,
+                 "precision": r3(prec), "recall": r3(rec),
+                 "should_trigger_hit_rate": r3(pos_rate), "should_not_false_trigger_rate": r3(neg_rate)}
     L = ["# Trigger eval summary", ""]
-    if error_calls:
-        L += [f"**INVALID RUN: {error_calls} `claude -p` call(s) errored in {errored} quer(ies). "
-              "Errored calls are not graded. Do not quote these numbers.**", ""]
+    if not valid:
+        why = (f"{error_calls} `claude -p` call(s) errored in {errored} quer(ies); errored calls are not graded"
+               if error_calls else "no call was graded (every call timed out)")
+        L += [f"**INVALID RUN: {why}. Do not quote these numbers.**", ""]
     L += [f"- Skill: `{skill_md}` (sha256 `{d['meta']['skill_sha256'][:12]}`)",
           f"- Description: {d['description']}",
-          f"- Date (UTC): {start}; wall time {secs}s; model: {model}; runs per query: {runs}; `claude -p` calls: {calls}",
+          f"- Date (UTC): {start}; wall time {secs}s; model: {model}; runs per query: {runs}; "
+          f"`claude -p` calls: {calls}; graded calls: {graded_calls}",
           f"- HOME isolated: {'yes' if isolate == '1' else 'NO (user skills and settings can affect results)'}",
-          f"- Should trigger: {tp}/{n_pos} queries pass; hit rate over graded runs {pos_rate:.0%}",
-          f"- Should not trigger: {tn}/{n_neg} queries pass; false-trigger rate over graded runs {neg_rate:.0%}",
-          f"- Precision {prec:.2f}, recall {rec:.2f} (query level, threshold {THRESHOLD}); "
+          f"- Should trigger: {tp}/{n_pos} queries pass; hit rate over graded calls {pct(pos_rate)}",
+          f"- Should not trigger: {tn}/{n_neg} queries pass; false-trigger rate over graded calls {pct(neg_rate)}",
+          f"- Precision {num(prec)}, recall {num(rec)} (conclusive queries only, threshold {THRESHOLD}); "
           f"errored queries: {errored}; inconclusive (timeout) queries: {inconclusive}", "",
           "| Expected | Triggers / graded runs | Result | Query |", "|---|---|---|---|"]
     order = {"ERROR": 0, "INCONCLUSIVE": 1, "FAIL": 2, "PASS": 3}
@@ -107,10 +132,13 @@ def main(argv: list[str]) -> int:
         q = r["query"].replace("|", "/").replace("\n", " ")[:120]
         L.append(f"| {'trigger' if r['should_trigger'] else 'no trigger'} | {r['triggers']}/{r['graded_runs']} | "
                  f"{verdict(r)} | {q} |")
+    # Grading finished: only now write trigger.json (run_trigger.sh removed any old copy).
+    json.dump(d, open(path, "w"), indent=2)
     open(md, "w").write("\n".join(L) + "\n")
     print("\n".join(L))
-    if error_calls:
-        print(f"run_trigger.sh: {error_calls} call(s) errored; the run is invalid", file=sys.stderr)
+    if not valid:
+        print("run_trigger.sh: the run is invalid (" + ("errored calls" if error_calls else "nothing graded") + ")",
+              file=sys.stderr)
         return 1
     return 0
 

@@ -152,7 +152,7 @@ class TriggerGrade(unittest.TestCase):
             {"query": "b", "outcome": "success", "triggered": True, "detail": ""},
             {"query": "b", "outcome": "success", "triggered": True, "detail": ""}]) + "\n")
         (tmp / "SKILL.md").write_text("x")
-        code = tg.main([str(tmp / "t.json"), str(tmp / "s.md"), str(tmp / "SKILL.md"), "t", "1", "m", "2",
+        code = tg.main([str(tmp / "t.json"), str(tmp / "t.json"), str(tmp / "s.md"), str(tmp / "SKILL.md"), "t", "1", "m", "2",
                         str(tmp / "o.jsonl"), "1"])
         self.assertEqual(code, 1)
         d = json.loads((tmp / "t.json").read_text())
@@ -170,7 +170,7 @@ class TriggerGrade(unittest.TestCase):
             {"query": "b", "outcome": "success", "triggered": True, "detail": ""},
             {"query": "b", "outcome": "success", "triggered": False, "detail": ""}]) + "\n")
         (tmp / "SKILL.md").write_text("x")
-        code = tg.main([str(tmp / "t.json"), str(tmp / "s.md"), str(tmp / "SKILL.md"), "t", "1", "m", "2",
+        code = tg.main([str(tmp / "t.json"), str(tmp / "t.json"), str(tmp / "s.md"), str(tmp / "SKILL.md"), "t", "1", "m", "2",
                         str(tmp / "o.jsonl"), "0"])
         self.assertEqual(code, 0)
         d = json.loads((tmp / "t.json").read_text())
@@ -261,6 +261,207 @@ def _parse_args(argv):
     finally:
         rb.argparse.ArgumentParser.parse_args = orig
     return captured["ns"]
+
+
+# ---- review fixes on PR #39 --------------------------------------------------------------------
+
+class ReviewFixes(unittest.TestCase):
+    def test_result_with_error_subtype_is_error(self):
+        out = run_shim([{"type": "result", "subtype": "error_max_turns", "is_error": False}])
+        self.assertEqual(out[0], "error")
+
+    def test_isolation_drops_claude_config_dir(self):
+        old = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = "/somewhere/.claude"
+        try:
+            self.assertNotIn("CLAUDE_CONFIG_DIR", rb.Claude(None, 1, 0, True).env)
+            self.assertEqual(rb.Claude(None, 1, 0, False).env.get("CLAUDE_CONFIG_DIR"), "/somewhere/.claude")
+        finally:
+            if old is None:
+                os.environ.pop("CLAUDE_CONFIG_DIR")
+            else:
+                os.environ["CLAUDE_CONFIG_DIR"] = old
+
+    def test_nothing_graded_is_invalid(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "raw.json").write_text(json.dumps({"description": "x", "results": [
+            {"query": "a", "should_trigger": False, "runs": 1, "triggers": 0, "pass": True},
+            {"query": "b", "should_trigger": True, "runs": 1, "triggers": 0, "pass": False}]}))
+        (tmp / "o.jsonl").write_text("\n".join(json.dumps(o) for o in [
+            {"query": "a", "outcome": "timeout", "triggered": False, "detail": ""},
+            {"query": "b", "outcome": "timeout", "triggered": False, "detail": ""}]) + "\n")
+        (tmp / "SKILL.md").write_text("x")
+        code = tg.main([str(tmp / "raw.json"), str(tmp / "t.json"), str(tmp / "s.md"), str(tmp / "SKILL.md"),
+                        "t", "1", "m", "1", str(tmp / "o.jsonl"), "1"])
+        self.assertEqual(code, 1)
+        d = json.loads((tmp / "t.json").read_text())
+        self.assertFalse(d["summary"]["valid"])
+        self.assertIsNone(d["meta"]["should_trigger_hit_rate"])
+        self.assertIsNone(d["meta"]["should_not_false_trigger_rate"])
+        md = (tmp / "s.md").read_text()
+        self.assertIn("n/a", md)
+        self.assertNotIn("0%", md)
+
+    def test_partial_timeout_keeps_successful_calls_in_rates(self):
+        # Codex r4210151768: a timed-out run must not drop the query's successful calls from the
+        # call-level rate, and an inconclusive query must not count as a miss in recall.
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "raw.json").write_text(json.dumps({"description": "x", "results": [
+            {"query": "a", "should_trigger": False, "runs": 2, "triggers": 0, "pass": True},
+            {"query": "b", "should_trigger": True, "runs": 2, "triggers": 1, "pass": True},
+            {"query": "c", "should_trigger": True, "runs": 2, "triggers": 2, "pass": True}]}))
+        S = {"outcome": "success", "detail": ""}
+        (tmp / "o.jsonl").write_text("\n".join(json.dumps(o) for o in [
+            dict(S, query="a", triggered=False), dict(S, query="a", triggered=False),
+            {"query": "b", "outcome": "timeout", "triggered": False, "detail": ""},
+            dict(S, query="b", triggered=False),
+            dict(S, query="c", triggered=True), dict(S, query="c", triggered=True)]) + "\n")
+        (tmp / "SKILL.md").write_text("x")
+        tg.main([str(tmp / "raw.json"), str(tmp / "t.json"), str(tmp / "s.md"), str(tmp / "SKILL.md"),
+                 "t", "1", "m", "2", str(tmp / "o.jsonl"), "1"])
+        m = json.loads((tmp / "t.json").read_text())["meta"]
+        self.assertEqual(m["should_trigger_hit_rate"], round(2 / 3, 3))  # b's success counts
+        self.assertEqual(m["recall"], 1.0)  # b is inconclusive, so not in the denominator
+        self.assertEqual(m["precision"], 1.0)
+
+    def test_grade_retries_once_on_mismatch_and_keeps_raw(self):
+        class Flaky:
+            def __init__(self, texts):
+                self.texts, self.n = list(texts), 0
+
+            def ask(self, prompt, model=None):
+                self.n += 1
+                return {"status": "ok", "text": self.texts.pop(0), "detail": ""}
+        bad, good = judge((EXPS[0], True), ("Other.", True)), judge((EXPS[0], True), (EXPS[1], False))
+        c = Flaky([bad, good])
+        g = rb.grade(c, None, "p", "a", EXPS)
+        self.assertEqual((g["status"], c.n), ("ok", 2))
+        self.assertEqual(g["raw"], [bad, good])
+        c = Flaky([bad, bad])
+        g = rb.grade(c, None, "p", "a", EXPS)
+        self.assertEqual((g["status"], c.n), ("unparsable", 2))
+        c = Flaky(["no json here"])
+        g = rb.grade(c, None, "p", "a", EXPS)
+        self.assertEqual((g["status"], c.n), ("unparsable", 1))  # only a mismatch is retried
+
+
+FAKE_BEHAVIOR_CLAUDE = r"""#!{py}
+import json, re, sys
+p = sys.stdin.read()
+if "You are a strict grader" in p:
+    block = p.split("EXPECTATIONS (in order):", 1)[1].split("\n\nReturn ONLY", 1)[0]
+    exps = [re.sub(r"^\d+\. ", "", l) for l in block.strip().splitlines()]
+    text = json.dumps([{{"assertion": e, "pass": True, "evidence": "fake"}} for e in exps])
+else:
+    text = "fake answer"
+print(json.dumps({{"result": text, "is_error": False, "usage": {{}}, "total_cost_usd": 0, "modelUsage": {{}}}}))
+"""
+
+FAKE_TRIGGER_CLAUDE = r"""#!{py}
+import json, os, sys, time
+with open(os.environ["FAKE_ENV_LOG"], "a") as f:
+    f.write(json.dumps({{"HOME": os.environ.get("HOME"), "CCD": os.environ.get("CLAUDE_CONFIG_DIR")}}) + "\n")
+if os.environ.get("FAKE_MODE") == "sleep":
+    time.sleep(30)
+for e in [{{"type": "stream_event", "event": {{"type": "message_stop"}}}}]:
+    print(json.dumps(e), flush=True)
+"""
+
+FAKE_RUN_EVAL = r"""import argparse, json, os, sys
+from pathlib import Path
+
+def run_single_query(*a, **k):
+    raise RuntimeError("the shim must replace this")
+
+def main():
+    ap = argparse.ArgumentParser()
+    for f in ("--eval-set", "--skill-path", "--runs-per-query", "--num-workers", "--timeout", "--model"):
+        ap.add_argument(f)
+    ap.add_argument("--verbose", action="store_true")
+    a = ap.parse_args()
+    if os.environ.get("FAKE_UPSTREAM_BROKEN"):
+        print("not json")
+        return
+    rs = []
+    for item in json.loads(Path(a.eval_set).read_text()):
+        t = [run_single_query(item["query"], "ec", "desc", int(a.timeout), str(Path.cwd()), a.model)
+             for _ in range(int(a.runs_per_query))]
+        rs.append({"query": item["query"], "should_trigger": item["should_trigger"], "triggers": sum(t),
+                   "runs": len(t), "trigger_rate": sum(t) / len(t), "pass": True})
+    print(json.dumps({"skill_name": "ec", "description": "desc", "results": rs, "summary": {}}))
+"""
+
+
+def _exe(path: Path, text: str) -> None:
+    path.write_text(text)
+    os.chmod(path, 0o755)
+
+
+class EndToEnd(unittest.TestCase):
+    """run_trigger.sh and run_behavior.py against a fake `claude` and a fake skill-creator."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="e2e-"))
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.env = {k: v for k, v in os.environ.items() if k != "COORD_EVAL_ISOLATE_HOME"}
+        self.env["PATH"] = f"{self.bin}{os.pathsep}{os.environ['PATH']}"
+
+    def trigger(self, extra_env=None, timeout="5"):
+        import subprocess
+        sc = self.tmp / "sc"
+        (sc / "scripts").mkdir(parents=True)
+        (sc / "scripts" / "__init__.py").write_text("")
+        (sc / "scripts" / "run_eval.py").write_text(FAKE_RUN_EVAL)
+        (sc / "scripts" / "run_eval.py").touch()
+        _exe(self.bin / "claude", FAKE_TRIGGER_CLAUDE.format(py=sys.executable))
+        skill = self.tmp / "skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("---\nname: ec\ndescription: x\n---\nbody\n")
+        q = self.tmp / "q.json"
+        q.write_text(json.dumps([{"query": "what is 2+2", "should_trigger": False}]))
+        out = self.tmp / "out"
+        out.mkdir()
+        (out / "trigger.json").write_text("stale")
+        env = dict(self.env, SKILL_CREATOR=str(sc), FAKE_ENV_LOG=str(self.tmp / "env.jsonl"),
+                   CLAUDE_CONFIG_DIR=str(self.tmp / "user-config"), **(extra_env or {}))
+        p = subprocess.run(["bash", str(HERE / "run_trigger.sh"), str(skill), str(out), "--queries", str(q),
+                            "--num-workers", "1", "--timeout", timeout], env=env, capture_output=True, text=True)
+        return p, out
+
+    def test_trigger_isolation_unsets_claude_config_dir(self):
+        p, out = self.trigger()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        seen = [json.loads(line) for line in (self.tmp / "env.jsonl").read_text().splitlines()]
+        self.assertTrue(seen)
+        for s in seen:
+            self.assertIsNone(s["CCD"])
+            self.assertNotEqual(s["HOME"], os.environ.get("HOME"))
+        self.assertTrue((out / "trigger-raw.json").is_file())
+        self.assertTrue(json.loads((out / "trigger.json").read_text())["summary"]["valid"])
+
+    def test_trigger_all_timeouts_exit_nonzero(self):
+        p, out = self.trigger({"FAKE_MODE": "sleep"}, timeout="1")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertFalse(json.loads((out / "trigger.json").read_text())["summary"]["valid"])
+
+    def test_trigger_json_only_after_grading(self):
+        p, out = self.trigger({"FAKE_UPSTREAM_BROKEN": "1"})
+        self.assertNotEqual(p.returncode, 0)
+        self.assertTrue((out / "trigger-raw.json").is_file())
+        self.assertFalse((out / "trigger.json").exists())  # the stale file is gone, no new one written
+
+    def test_behavior_saves_raw_grader_text(self):
+        import subprocess
+        _exe(self.bin / "claude", FAKE_BEHAVIOR_CLAUDE.format(py=sys.executable))
+        out = self.tmp / "b"
+        p = subprocess.run([sys.executable, str(HERE / "run_behavior.py"), "--no-skill", "--out", str(out),
+                            "--only", "1", "--no-goldens"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        run = json.loads((out / "behavior.json").read_text())["evals"][0]["runs"][0]
+        self.assertEqual(run["grader_status"], "ok")
+        self.assertEqual(len(run["grader_raw"]), 1)
+        self.assertIn('"assertion"', run["grader_raw"][0])
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ Per eval, the mean pass rate over 3 runs:
 - v11's one miss: the flaky-test answer did not say that repeated runs confirm the fix. v10 missed the same expectation in the first baseline.
 - Correction (2026-10-07, issue #24): this table first showed v11 at 121/123 and 25/27, with a second miss in 1 of 3 credentials runs. The grader failed that answer because it set a `human-gate` status. The expectation forbids only a decision issue, and the answer opened none and asked the user directly. The verdict is regraded to a pass in `v11-x3/behavior.json` (see `regraded_note`). The answer text is unchanged.
 - v10's three misses were in fan-out (no worktree named), flake classification and keep-alive (no `waiting` status).
-- The skill adds 66 percentage points over the same model with no skill.
+- The skill adds about 55 percentage points over the same model with no skill (v11 99% against 44%; v10 98%, about 54 points).
 
 ## Triggering
 

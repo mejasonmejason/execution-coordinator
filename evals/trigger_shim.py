@@ -85,8 +85,8 @@ class Detector:
                        or (name == "Read" and self.clean_name in str(inp.get("file_path", ""))))
                 return ("success", hit, "")
         elif kind == "result":
-            if event.get("is_error"):
-                return ("error", False, f"result is_error; subtype={event.get('subtype')}; "
+            if event.get("is_error") or event.get("subtype", "success") != "success":
+                return ("error", False, f"result is_error={event.get('is_error')}; subtype={event.get('subtype')}; "
                                         f"terminal_reason={event.get('terminal_reason')}")
             return ("success", False, "")
         return None
