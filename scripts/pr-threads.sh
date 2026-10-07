@@ -24,10 +24,13 @@
 # sentences are optional (see DEFAULT_NOTICES).
 # A pair with no colon, an empty login, an empty regex, or a regex jq rejects is a broken config: the script
 # prints an ERROR line on stderr and exits 3 before it reads any PR, so READY cannot pass on it.
-# A pair whose login is "*" is also a broken config when its whole-body regex matches any probe body ("x",
-# "P1: real bug in auth", or a two-line "a\nb"): ".*", ".+" and "(?s:.*)" would turn every comment from every
-# author into INFO and switch the audit off. A "*" pair that matches only notice-like text is allowed.
-# An empty or whitespace-only response, or one with no pullRequest, is unreadable: exit 3, never OK.
+# A pair whose login is "*" (wildcard) is a broken config by default: a broad regex would turn comments from
+# every author into INFO and switch the audit off. Set COORD_NOTICE_ALLOW_WILDCARD=1 to allow it. When allowed,
+# a "*" pair is still a broken config if its whole-body regex matches any probe body ("x",
+# "P1: real bug in auth", or a two-line "a\nb"). The probes catch ".*", ".+" and "(?s:.*)", but not every
+# broad regex (for example "(?s:.*)\d"), so the opt-in is the real guard.
+# An empty or whitespace-only response, or one with no pullRequest or no viewer login, is unreadable: exit 3,
+# never OK. Without the viewer login the script cannot find your own pending review (UNSENT).
 # Exit: 0 nothing actionable, 1 ACTION or UNSENT present, 3 a PR or the config could not be read, or jq failed.
 set -uo pipefail
 
@@ -38,16 +41,19 @@ IGNORE="${IGNORE_LOGINS:-codecov,dependabot,renovate,github-actions-notices}"
 # credits to your account and enable them for code reviews in your [settings](url)."
 DEFAULT_NOTICES='chatgpt-codex-connector[bot]:You have reached your Codex usage limits for code reviews\.(\s+You can see your limits in the \[Codex usage dashboard\]\(https://chatgpt\.com/codex/cloud/settings/usage\)\.)?(\s+To continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your \[settings\]\(https://chatgpt\.com/codex/cloud/settings/code-review\)\.)?'
 NOTICES="${COORD_NOTICE_PATTERNS-$DEFAULT_NOTICES}"
+ALLOW_WILDCARD="${COORD_NOTICE_ALLOW_WILDCARD:-0}"
 status=0
 
 # Validate the notice config up front. A bad pair makes every later verdict untrustworthy, so exit 3 now.
 # The bare regex is tested too: the anchor wrapper alone would accept an unbalanced "b)(".
 if [ -n "$NOTICES" ]; then
-  if ! bad=$(jq -rn --arg nt "$NOTICES" '
+  if ! bad=$(jq -rn --arg nt "$NOTICES" --arg aw "$ALLOW_WILDCARD" '
       $nt | split("|")[] | . as $p | index(":") as $i
       | if $i == null then "pair has no login:regex colon: \($p | tojson)"
         elif ($p[:$i] | test("^\\s*$")) then "pair has an empty login: \($p | tojson)"
         elif ($p[$i+1:] | test("^\\s*$")) then "pair has an empty regex: \($p | tojson)"
+        elif $p[:$i] == "*" and $aw != "1"
+        then "wildcard login is off by default; set COORD_NOTICE_ALLOW_WILDCARD=1 to allow it: \($p | tojson)"
         else try (("" | test($p[$i+1:]; "i") | empty), ("" | test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i") | empty),
                (if $p[:$i] == "*" and (["x", "P1: real bug in auth", "a\nb"]
                     | any(.[]; test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i")))
@@ -118,7 +124,7 @@ for url in "$@"; do
           (index(":") as $i | .[:$i]) as $pl | (index(":") as $i | .[$i+1:]) as $re
           | ($pl == "*" or ($pl | unbot) == ($l | unbot)) and ($re != "")
             and ($b | test("\\A\\s*(?:" + $re + ")\\s*\\z"; "i")));
-    .data.viewer.login as $me
+    (.data.viewer.login // error("response has no viewer login")) as $me
     | (.data.repository.pullRequest // error("response has no pullRequest")) as $pr
     # last agent comment time anywhere on the PR, for PR-level comments and review summaries
     | ([$pr.comments.nodes[], ($pr.reviewThreads.nodes[].comments.nodes[]) | select(agent) | .createdAt] | max // "") as $lastAgent

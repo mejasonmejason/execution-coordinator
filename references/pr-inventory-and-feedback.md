@@ -95,7 +95,7 @@ Run `scripts/pr-threads.sh <pr-url> [...]` before PR reports, READY, handoffs an
 | UNSENT | Your own PENDING review, which nobody else can see | Publish it or delete it. |
 | INFO | A bot notice with no review content, such as "reached your usage limits" | No reply needed. Report it: the reviewer is silent, so the PR is still unreviewed by that reviewer. |
 
-- INFO rows come from `$COORD_NOTICE_PATTERNS`, a `|`-separated list of `login:regex` pairs (login may be `*`). The default matches the Codex quota notice. An empty value turns the default off.
+- INFO rows come from `$COORD_NOTICE_PATTERNS`, a `|`-separated list of `login:regex` pairs. The default matches the Codex quota notice. An empty value turns the default off. A `*` (wildcard) login is rejected (exit 3) unless `COORD_NOTICE_ALLOW_WILDCARD=1` is set, because a broad regex on every author can hide real comments as INFO.
 - Exit 1 means something is actionable. Exit 3 means a PR was unreadable, and is never treated as zero.
 - When the user links a comment, answer it, re-audit, and handle the other ACTION rows in the same turn.
 - Report the linked counts: `N need a response, M awaiting reviewer, K unsent`.

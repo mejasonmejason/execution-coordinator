@@ -225,7 +225,7 @@ has "$out" "ACTION    PR comment by chatgpt-codex-connector" "notice: with the d
 setj graphql.json ".data.repository.pullRequest.reviews.nodes = [] | .data.repository.pullRequest.comments.nodes = $(cm 'acme-bot' 'Build quota: 12:30 left')"
 out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota: \\d+:\\d+ left" "$pt" "$U"); t $? 0 "notice: a custom pattern matches (colon in the regex)"
 has "$out" "INFO      notice by acme-bot" "notice: a custom pattern is INFO"
-out=$(COORD_NOTICE_PATTERNS="other:zzz|*:build quota.*" "$pt" "$U"); t $? 0 "notice: a wildcard login in a pattern list matches"
+out=$(COORD_NOTICE_ALLOW_WILDCARD=1 COORD_NOTICE_PATTERNS="other:zzz|*:build quota.*" "$pt" "$U"); t $? 0 "notice: an allowed wildcard login in a pattern list matches"
 # the REST fallback keeps the [bot] suffix on the login
 fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
 echo "[{\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"$QN\",\"html_url\":\"n2\",\"created_at\":\"2026-01-01T00:00:00Z\"}]" > "$STUB_DIR/icomments.json"
@@ -292,20 +292,43 @@ for body in '' '
   hasnt "$out" "OK " "empty: response '$(printf %s "$body" | tr -d '\n ' | head -c 40)' never prints OK"
   out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "empty: ready.sh is not READY on response '$(printf %s "$body" | tr -d '\n ' | head -c 40)'"
 done
+# a response with no viewer login cannot detect UNSENT, so it is unreadable (exit 3), never OK (issue #32)
+for vw in 'null' '{"login":null}' 'absent'; do
+  fixtures
+  if [ "$vw" = absent ]; then setj graphql.json 'del(.data.viewer)'; else setj graphql.json ".data.viewer = $vw"; fi
+  out=$("$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "viewer: viewer $vw exits 3"
+  has "$out" "no viewer" "viewer: viewer $vw names the missing viewer"
+  hasnt "$out" "OK " "viewer: viewer $vw never prints OK"
+done
+fixtures; setj graphql.json '.data.viewer = null'
+out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "viewer: ready.sh is not READY with no viewer login"
 fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"; : > "$STUB_DIR/user.json"
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U" 2>&1); t $? 3 "empty: REST fallback with an empty user response exits 3"
 hasnt "$out" "OK " "empty: REST fallback empty response never prints OK"
-# a wildcard login with a match-all regex fails closed; a notice-only wildcard still works
+# a wildcard login with a match-all regex fails closed even when wildcards are allowed (the probe guard)
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'P1: real bug in auth')"
 for wc in '*:.*' '*:.+' '*:(?s:.*)'; do
-  out=$(COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
-  t "$rc" 3 "wildcard: COORD_NOTICE_PATTERNS='$wc' exits 3"
-  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: '$wc' names the wildcard in the ERROR line"
-  hasnt "$out" "INFO" "wildcard: '$wc' never turns a comment into INFO"
+  out=$(COORD_NOTICE_ALLOW_WILDCARD=1 COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "wildcard: allowed COORD_NOTICE_PATTERNS='$wc' exits 3"
+  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: allowed '$wc' names the wildcard in the ERROR line"
+  hasnt "$out" "INFO" "wildcard: allowed '$wc' never turns a comment into INFO"
 done
+# a wildcard login is rejected by default, even one the probes miss (issue #32)
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'P1: real bug on line 12')"
+for wc in '*:build quota.*' '*:(?s:.*)\d' 'other:zzz|*:build quota.*'; do
+  out=$(COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "wildcard: default COORD_NOTICE_PATTERNS='$wc' exits 3"
+  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: default '$wc' names the wildcard in the ERROR line"
+  has "$out" "COORD_NOTICE_ALLOW_WILDCARD=1" "wildcard: default '$wc' names the opt-in variable"
+  hasnt "$out" "INFO" "wildcard: default '$wc' never turns a comment into INFO"
+  hasnt "$out" "OK " "wildcard: default '$wc' never prints OK"
+done
+out=$(COORD_NOTICE_ALLOW_WILDCARD=0 COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 3 "wildcard: COORD_NOTICE_ALLOW_WILDCARD=0 still rejects a wildcard"
+out=$(COORD_NOTICE_PATTERNS='*:build quota.*' "$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "wildcard: ready.sh is not READY with a default-rejected wildcard"
 setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'Build quota low')"
-out=$(COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 0 "wildcard: '*:build quota.*' still works"
-has "$out" "INFO      notice by alex" "wildcard: '*:build quota.*' still reports INFO"
+out=$(COORD_NOTICE_ALLOW_WILDCARD=1 COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 0 "wildcard: allowed '*:build quota.*' works"
+has "$out" "INFO      notice by alex" "wildcard: allowed '*:build quota.*' reports INFO"
 # a broken COORD_NOTICE_PATTERNS fails closed: exit 3 with an ERROR line, never OK and never READY
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' 'P1: this loop never exits')"
 out=$(COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$pt" "$U" 2>&1); rc=$?
