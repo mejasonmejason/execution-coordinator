@@ -107,7 +107,7 @@ Reuse your harness's review and CI-fix commands; these rules still apply.
 4. **Thread resolution:** resolve only bot-opened false positives, after publishing evidence. Never resolve human threads, because the human decides. Re-read to verify.
 5. **Refute before fixing:** treat AI and bot findings as false unless a `file:line` proves a defect, because many are wrong. Reject with evidence. Fix verified defects and explicit requirements. Never dismiss human comments this way, because a human needs a human answer.
 6. **Re-fetch first:** right before a reply, resolution, push or merge, confirm the PR is open, the thread unresolved and the head unchanged since you decided. Otherwise decide again.
-7. **Flake or caused?** PR-caused if the diff touches its path or it passes on base; otherwise check base history. A flake gets one rerun and a separate owned test-fix task, verified by repeated runs. Never mask it with retries, skips or quarantine, because the failure then ships.
+7. **Flake or caused?** Decide: PR-caused if the diff touches its path or it passes on base; if base history shows it failing too, it is not. A flake gets one rerun and a separate owned test-fix task, verified by repeated runs. Never mask it with retries, skips or quarantine, because the failure then ships.
 
 Required human reviews, compliance or change-management checks and deploy approvals are gates. Report them and never try to fix them, because only named people can clear them.
 
