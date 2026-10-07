@@ -539,18 +539,20 @@ fixtures; echo '[]' > "$STUB_DIR/files.json"
 printf '%s\n' "echo '[{\"state\":\"CHANGES_REQUESTED\",\"user\":{\"login\":\"rev\"}}]' > '$STUB_DIR/reviews.json'" \
   "cd '$R' && '$ready' --key bw >/dev/null 2>&1" > "$STUB_DIR/side.sh"
 out=$("$st" dispatch bw --state accepted 2>&1); rc=$?
-[ "$rc" -ne 0 ]; t $? 0 "race: accepted refused when the record changed during the head read"
+t "$rc" 5 "race: accepted refused (exit 5) when the record changed during the head read"
 has "$out" "dispatch changed; retry" "race: the refusal says to retry"
 t "$(sj '[.dispatches.bw.state, .dispatches.bw.ready.ok] | join(",")')" "running,false" "race: the newer verdict survives"
 echo '[]' > "$STUB_DIR/reviews.json"
-# Read-modify-write holds a mkdir lock. A live holder blocks; a dead holder's lock is cleared.
-mkdir "$R/.coordinator/.lock"; echo $$ > "$R/.coordinator/.lock/pid"
-COORD_LOCK_TRIES=3 "$st" dispatch bw --note x >/dev/null 2>&1; [ $? -ne 0 ]; t $? 0 "lock: status.sh fails while a live process holds the lock"
+# Read-modify-write holds a mkdir lock. A lock still held after COORD_LOCK_TRIES is reported as left over.
+mkdir "$R/.coordinator/.lock"
+out=$(COORD_LOCK_TRIES=3 "$st" dispatch bw --note x 2>&1); t $? 1 "lock: status.sh fails while the lock is held"
+has "$out" ".coordinator/.lock is left over from a stopped process; remove it" "lock: the message says the lock is left over"
 t "$(sj '.dispatches.bw.note // "none"')" none "lock: nothing written while locked"
 COORD_LOCK_TRIES=3 "$ready" --key bw >/dev/null 2>&1; t $? 3 "lock: ready.sh --key exits 3 when it cannot record the verdict"
-sh -c 'exit 0' & dead=$!; wait "$dead"; echo "$dead" > "$R/.coordinator/.lock/pid"
-COORD_LOCK_TRIES=3 "$st" dispatch bw --note y >/dev/null 2>&1; t $? 0 "lock: a dead holder's lock is cleared"
-t "$(sj .dispatches.bw.note)" y "lock: the write lands after clearing a stale lock"
+[ -d "$R/.coordinator/.lock" ]; t $? 0 "lock: a writer never removes a lock it did not take"
+rmdir "$R/.coordinator/.lock"
+COORD_LOCK_TRIES=0 "$st" dispatch bw --note y >/dev/null 2>&1; t $? 0 "lock: COORD_LOCK_TRIES=0 makes one try and takes a free lock"
+t "$(sj .dispatches.bw.note)" y "lock: the write lands once the lock is removed"
 [ ! -e "$R/.coordinator/.lock" ]; t $? 0 "lock: released after the write"
 # The race also covers a concurrent --run-id change.
 fixtures; echo '[]' > "$STUB_DIR/files.json"
@@ -637,39 +639,6 @@ fixtures; echo '[]' > "$STUB_DIR/files.json"
 setj pr.json ".state = \"closed\" | .merged = true | .head.sha = \"$H2\""
 "$ready" --key mh >/dev/null 2>&1; t "$(sj .dispatches.mh.ready.ok)" false "merged: a PR merged at another head does not keep the verdict"
 fixtures; echo '[]' > "$STUB_DIR/files.json"
-# The lock is a symlink whose target names the owner. A dead owner's lock is cleared, and nothing is left behind.
-LK="$R/.coordinator/.lock"
-sh -c 'exit 0' & dead=$!; wait "$dead"
-ln -s "$dead.1" "$LK"
-"$st" dispatch lk --note a >/dev/null 2>&1; t $? 0 "lock: a stale lock with a dead owner is cleared"
-t "$(ls -A "$R/.coordinator" | grep -c '^\.lock')" 0 "lock: no lock or clear marker is left behind"
-# One clearer per stale lock: while another process clears it, this writer removes nothing.
-ln -s "$dead.1" "$LK"; ln -s $$ "$LK.clear.$dead.1"
-COORD_LOCK_TRIES=1 "$st" dispatch lk --note b >/dev/null 2>&1; [ $? -ne 0 ]; t $? 0 "lock: a stale lock another process is clearing is not cleared twice"
-t "$(readlink "$LK")" "$dead.1" "lock: that stale lock stays for its clearer"
-rm -f "$LK" "$LK.clear.$dead.1"
-# The clearer re-reads the owner: a live lock that replaced the stale one meanwhile is not removed.
-realps=$(command -v ps)
-printf '%s\n' '#!/usr/bin/env bash' \
-  "if [ -f '$STUB_DIR/ps-side.sh' ]; then mv '$STUB_DIR/ps-side.sh' '$STUB_DIR/ps-side.run'; bash '$STUB_DIR/ps-side.run'; fi" \
-  "exec '$realps' \"\$@\"" > "$BIN/ps"; chmod +x "$BIN/ps"
-ln -s "$dead.2" "$LK"; printf '%s\n' "rm -f '$LK'; ln -s '$$.live' '$LK'" > "$STUB_DIR/ps-side.sh"
-COORD_LOCK_TRIES=1 "$st" dispatch lk --note c >/dev/null 2>&1; [ $? -ne 0 ]; t $? 0 "lock: a writer that saw a stale lock waits when a live lock replaced it"
-t "$(readlink "$LK")" "$$.live" "lock: the live lock that replaced a stale one is not removed"
-t "$(sj .dispatches.lk.note)" a "lock: nothing written while the live lock is held"
-rm -f "$BIN/ps"
-# COORD_LOCK_TRIES=0 makes one try, the same with GNU and BSD userland. A live lock's message covers pid reuse.
-out=$(COORD_LOCK_TRIES=0 "$st" dispatch lk --note d 2>&1); t $? 1 "lock: COORD_LOCK_TRIES=0 fails at once on a live lock"
-has "$out" "If that pid is not a status.sh or ready.sh run, it was reused" "lock: the live-lock message covers a reused pid"
-rm -f "$LK"
-COORD_LOCK_TRIES=0 "$st" dispatch lk --note d >/dev/null 2>&1; t $? 0 "lock: COORD_LOCK_TRIES=0 takes a free lock"
-# A lock with no owner pid (an old lock directory) is cleared once it is over a minute old.
-mkdir "$LK"
-out=$(COORD_LOCK_TRIES=1 "$st" dispatch lk --note e 2>&1); t $? 1 "lock: a new lock with no owner pid blocks"
-has "$out" "has no owner pid" "lock: the message says the lock has no owner pid"
-touch -t 202001010000 "$LK"
-COORD_LOCK_TRIES=1 "$st" dispatch lk --note e >/dev/null 2>&1; t $? 0 "lock: a lock with no owner pid over a minute old is cleared"
-[ ! -e "$LK" ]; t $? 0 "lock: released after the write"
 # A .coordinator directory the writer cannot write: say so at once, not "lock is held".
 W=$(mktemp -d); chmod 755 "$W"; mkdir "$W/repo"
 (cd "$W/repo" && git init -q && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m i \

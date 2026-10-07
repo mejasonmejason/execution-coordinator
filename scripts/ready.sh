@@ -12,81 +12,41 @@
 #   and records the verdict there with the key, PR, head, paths, --allow-pending and run_id it covered, which
 #   `status.sh dispatch K --state accepted` requires. It first records ok=false ("in progress") with a token for
 #   this run, so a run that stops early never leaves an old pass. The final verdict lands only while that token is
-#   still the stored one: when a later run (or a pr, paths or run_id change) replaced it, this run writes nothing.
-#   Every exit 3 with --key, usage errors included, records ok=false. An accepted dispatch keeps its verdict, and
-#   so does a merged PR whose head is the head the stored verdict checked. Writes hold the .coordinator/.lock
-#   symlink (COORD_LOCK_TRIES, as in status.sh).
+#   still stored; a later run, or a pr, paths or run_id change, replaces it. Every exit 3 with --key, usage errors
+#   included, records ok=false, unless the lock cannot be taken. An accepted dispatch keeps its verdict, and so
+#   does a merged PR whose head is the stored verdict's head. Writes hold .coordinator/.lock (COORD_LOCK_TRIES).
 # Output: "READY|NOT READY <url> @ <sha9>", then "  BLOCK ..." and "  WARN ..." lines. Exit 0 READY, 1 NOT READY,
 # 3 unreadable (never treat 3 as READY). A PR, check, review or file read that cannot be parsed is unreadable.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-# Portable lock shared with status.sh (no flock on macOS): `ln -s` makes .lock and its owner ("pid.nonce") in one
-# step. A dead owner's lock, or an ownerless one over a minute old, is cleared by one process at a time (a
-# per-owner .lock.clear.* marker), which re-reads the owner first. Only the owner unlocks. Keep in step with status.sh.
-lk_tok="" tmp="" stmp=""
-tok="$$.$RANDOM$RANDOM.$(date +%s)"  # this run's token on the dispatch verdict
-lk_owner() { if [ -L "$1" ]; then readlink "$1"; elif [ -d "$1" ]; then echo "dir.$(cat "$1/pid" 2>/dev/null)"; fi; }
-lk_alive() { kill -0 "$1" 2>/dev/null || ps -p "$1" >/dev/null 2>&1; }
-lk_clear() {
-  local m; m="$1.clear.$(printf '%s' "$2" | tr -c 'A-Za-z0-9.' _)"
-  ln -s "$$" "$m" 2>/dev/null || return 1
-  [ "$(lk_owner "$1")" != "$2" ] || rm -rf "$1"
-  rm -f "$m"
-}
+# Lock: mkdir is atomic (no flock on macOS). A write holds it for milliseconds, so a lock that outlasts
+# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is left over from a stopped process.
+# Keep these lines the same in status.sh and ready.sh.
+locked="" tmp=""
 lock() {
-  local D L tries="${COORD_LOCK_TRIES:-100}" i=0 c=0 o pid
-  D=$(dirname "$sfile"); L="$D/.lock"
-  [[ "$tries" =~ ^[0-9]+$ ]] || tries=100
-  lk_tok="$$.$RANDOM$RANDOM"
-  while :; do
-    # A legacy lock directory: skip ln, which would make the link inside it (and refresh its age).
-    if { [ ! -d "$L" ] || [ -L "$L" ]; } && ln -s "$lk_tok" "$L" 2>/dev/null; then
-      [ "$(readlink "$L" 2>/dev/null)" = "$lk_tok" ] && return 0
-      rm -f "$L/$lk_tok" 2>/dev/null
-    fi
-    [ -w "$D" ] || { echo "ready.sh: cannot lock: $D is not writable" >&2; lk_tok=""; return 1; }
-    o=$(lk_owner "$L"); pid=${o#dir.}; pid=${pid%%.*}
-    if [ -n "$o" ] && [ "$c" -lt 10 ]; then
-      if [[ "$pid" =~ ^[0-9]+$ ]] && ! lk_alive "$pid"; then lk_clear "$L" "$o" && { c=$((c + 1)); continue; }
-      elif ! [[ "$pid" =~ ^[0-9]+$ ]] && [ -n "$(find "$L" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-        lk_clear "$L" "$o" && { c=$((c + 1)); continue; }
-      fi
-    fi
-    i=$((i + 1)); [ "$i" -lt "$tries" ] || break
+  local i=0; [ -w "$dir" ] || { echo "${0##*/}: cannot lock: $dir is not writable" >&2; return 1; }
+  until mkdir "$dir/.lock" 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is left over from a stopped process; remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
     sleep 0.1
-  done
-  lk_tok=""
-  if [[ "$pid" =~ ^[0-9]+$ ]] && lk_alive "$pid"; then
-    echo "ready.sh: $L is held by pid $pid ($(ps -o comm= -p "$pid" 2>/dev/null)); retry. If that pid is not a status.sh or ready.sh run, it was reused: remove $L" >&2
-  elif [ -n "$o" ] && ! [[ "$pid" =~ ^[0-9]+$ ]]; then
-    echo "ready.sh: $L has no owner pid; it is cleared once it is over a minute old, or remove it if no status.sh or ready.sh is running" >&2
-  else
-    echo "ready.sh: $L could not be cleared (owner: ${o:-none}); remove $L and $L.clear.* if no status.sh or ready.sh is running" >&2
-  fi
-  return 1
+  done; locked=1
 }
-unlock() {
-  [ -z "$lk_tok" ] || [ "$(readlink "$(dirname "$sfile")/.lock" 2>/dev/null)" != "$lk_tok" ] || rm -f "$(dirname "$sfile")/.lock"
-  lk_tok=""
-}
-cleanup() { rm -rf "$tmp" "$stmp"; unlock; }
-trap cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
-# record VERDICT_JSON MODE: store the verdict and this run's token on dispatch $key, under the lock. MODE "claim"
-# always writes; MODE "own" writes only while the stored token is this run's. An accepted or missing dispatch is
-# left alone. Sets the dispatch PR only when it has none.
+unlock() { [ -z "$locked" ] || rm -rf "$dir/.lock"; locked=""; }
+trap '[ -z "$tmp" ] || rm -rf "$tmp"; [ -z "$dir" ] || rm -f "$dir/.status.$$"; unlock' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+tok="$$.$RANDOM$RANDOM.$(date +%s)"  # this run's token on the dispatch verdict
+# record VERDICT_JSON [own]: store the verdict and this run's token on dispatch $key, under the lock. With "own" it
+# writes only while the stored token is this run's. An accepted or missing dispatch is left alone. Sets the
+# dispatch PR only when it has none.
 record() {
   [ -n "${sfile:-}" ] && [ -n "${d:-}" ] || return 0
   lock || return 1
-  stmp=$(mktemp "$(dirname "$sfile")/.status.XXXXXX") || { stmp=""; unlock; return 1; }
-  if jq --arg k "$key" --arg tok "$tok" --arg mode "${2:-claim}" --argjson v "$1" '
+  local rc=0; jq --arg k "$key" --arg tok "$tok" --arg own "${2:-}" --argjson v "$1" '
        .dispatches[$k] as $d
-       | if $d == null or $d.state == "accepted" then .
-         elif $mode == "own" and ($d.ready.token // null) != $tok then .
+       | if $d == null or $d.state == "accepted" or ($own != "" and $d.ready.token != $tok) then .
          else (if $v.pr then .dispatches[$k].pr //= $v.pr else . end) | .dispatches[$k].ready = ($v + {key: $k, token: $tok}) end' \
-       "$sfile" > "$stmp"; then mv "$stmp" "$sfile"; stmp=""; unlock; return 0; fi
-  rm -f "$stmp"; stmp=""; unlock; return 1
+       "$sfile" > "$dir/.status.$$" && mv "$dir/.status.$$" "$sfile" || rc=1
+  rm -f "$dir/.status.$$"; unlock; return "$rc"
 }
 # Exit 3. With --key, the dispatch's verdict becomes ok=false, so an old pass never survives it.
 fail3() {
@@ -98,7 +58,7 @@ usage() { echo "ready.sh: $*" >&2; fail3 "$*"; }
 need() { [ "$1" -ge 2 ] || usage "$2 needs a value"; }
 
 # Find --key before the full parse, so a usage error below still clears that dispatch's verdict.
-ref="" sha="" paths="" base_sha="" key="" allow_pending=0 json=0 sfile="" d="" run="" prior=""
+ref="" sha="" paths="" base_sha="" key="" allow_pending=0 json=0 sfile="" dir="" d="" run="" prior=""
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[i]}" in -h|--help) sed -n '2,/^set /p' "$0" | grep '^#'; exit 0;; esac
@@ -106,7 +66,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
 done
 if [ -n "$key" ]; then
   root=$(git rev-parse --show-toplevel 2>/dev/null) || unreadable "--key needs to run inside the coordinated git repository"
-  sfile="$root/.coordinator/status.json"
+  dir="$root/.coordinator"; sfile="$dir/status.json"
   d=$(jq -c --arg k "$key" '.dispatches[$k] // empty' "$sfile" 2>/dev/null)
   [ -n "$d" ] || unreadable "no dispatch \"$key\" in $sfile"
   [ "$(jq -r .state <<<"$d")" != "accepted" ] || echo "ready.sh: dispatch \"$key\" is accepted; its verdict is kept" >&2
@@ -259,19 +219,16 @@ result=$(jq -Rn --slurpfile pr "$tmp/pr" --arg url "$url" --arg t "$(date -u +%Y
 ok=$(jq -r '.ok' <<<"$result" 2>/dev/null); [ "$ok" = "true" ] || [ "$ok" = "false" ] || unreadable "could not build the verdict"
 
 # The verdict names what it covered: PR, head, --paths scope, --allow-pending and the dispatch run. A merged PR
-# whose head is the stored verdict's head keeps that verdict (a post-merge re-check would only add "PR is merged").
+# whose head is the stored verdict's head keeps that verdict.
 verdict=$(jq -c --arg p "$paths" --argjson ap "$allow_pending" --arg run "$run" '
   {ok, pr, head, paths: ($p | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))),
-   allow_pending: ($ap == 1), run: (if $run == "" then null else $run end), at: .checked_at, blockers}' <<<"$result") \
-  || unreadable "could not build the verdict record"
-if [ -n "$key" ] && [ "$(jq -r .state <<<"$d" 2>/dev/null)" != "accepted" ]; then
-  if [ -n "$prior" ] && [ "$(jq -r '.merged == true' "$tmp/pr")" = "true" ] \
-     && [ "$(jq -r '.head // ""' <<<"$prior" 2>/dev/null)" = "$head" ]; then
-    verdict=$(jq -c 'del(.key, .token)' <<<"$prior")
-    echo "ready.sh: the PR is merged at the head the stored verdict checked; that verdict is kept" >&2
-  fi
+   allow_pending: ($ap == 1), run: (if $run == "" then null else $run end), at: .checked_at, blockers}' <<<"$result")
+if [ -n "$prior" ] && [ "$(jq -r '.merged' "$tmp/pr")" = "true" ] && [ "$(jq -r '.head' <<<"$prior")" = "$head" ]; then
+  verdict="$prior"; echo "ready.sh: the PR is merged at the head the stored verdict checked; that verdict is kept" >&2
+fi
+if [ -n "$key" ] && [ "$(jq -r .state <<<"$d")" != "accepted" ]; then
   record "$verdict" own || unreadable "could not record the verdict in $sfile"
-  [ "$(jq -r --arg k "$key" '.dispatches[$k].ready.token // ""' "$sfile" 2>/dev/null)" = "$tok" ] \
+  [ "$(jq -r --arg k "$key" '.dispatches[$k].ready.token' "$sfile")" = "$tok" ] \
     || echo "ready.sh: a later READY run or a pr, paths or run_id change replaced this run's record; this verdict was not recorded" >&2
 fi
 
