@@ -20,3 +20,5 @@ Every lesson that code can check needs an offline, fixture-backed `gh` case in `
 - Before a watcher resends or follows up, verify how the first message was received.
 - Finished executors (rule in the SKILL.md event loop): a message resets an idle session's timer. One broadcast kept eleven finished executors alive.
 - Claude Code cloud sessions refuse GraphQL and non-repo API paths. Before the REST fallback existed, `ready.sh` blocked every merge there. Use the cloud REST forms.
+- Read the exit code of `ready.sh` itself. Never pipe it into another command before a merge: in `ready.sh … | grep … && merge`, the `&&` tests grep, not READY. That shape merged a NOT READY PR (#41).
+- When a review bot is out of quota, its status summary stays on an older commit, so READY blocks. Replace that review with a fresh-context review, then merge with a logged `COORD_READY_OVERRIDE` that names the review. Never get past READY any other way.
