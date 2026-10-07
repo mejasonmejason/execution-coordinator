@@ -19,9 +19,13 @@
 # first character to its last. A body that holds the notice text plus any other text (a real finding in the
 # same review summary) is NOT a notice and stays ACTION. "." does not match a newline, so write "\s" or
 # "(?s:.)" where a pattern must span lines. End a pattern with ".*" to accept trailing text.
-# Default: the Codex quota message. It is made only of the literal Codex sentences, link texts and URLs (no
+# Default: two Codex notices. (1) The quota message. It is made only of the literal Codex sentences, link texts and URLs (no
 # free-text class), so prose added to a sentence, or placed inside a link text or URL, makes the body ACTION. The 2nd and 3rd
 # sentences are optional (see DEFAULT_NOTICES).
+# (2) The "Codex Review Summary" status comment (#36). Codex posts it on every PR and edits it in place. It
+# is INFO only when every table row reads "✅ **Completed**". A row that reads Running, or any shape the
+# pattern does not know, keeps the comment ACTION, so READY waits while a review runs. Codex findings arrive
+# as separate review threads and stay ACTION. The table pipes are written "\x7C" because "|" splits pairs.
 # A pair with no colon, an empty login, an empty regex, or a regex jq rejects is a broken config: the script
 # prints an ERROR line on stderr and exits 3 before it reads any PR, so READY cannot pass on it.
 # A pair whose login is "*" (wildcard) is a broken config by default: a broad regex would turn comments from
@@ -40,6 +44,7 @@ IGNORE="${IGNORE_LOGINS:-codecov,dependabot,renovate,github-actions-notices}"
 # in the [Codex usage dashboard](url).\nTo continue using code reviews, you can upgrade your account or add
 # credits to your account and enable them for code reviews in your [settings](url)."
 DEFAULT_NOTICES='chatgpt-codex-connector[bot]:You have reached your Codex usage limits for code reviews\.(\s+You can see your limits in the \[Codex usage dashboard\]\(https://chatgpt\.com/codex/cloud/settings/usage\)\.)?(\s+To continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your \[settings\]\(https://chatgpt\.com/codex/cloud/settings/code-review\)\.)?'
+DEFAULT_NOTICES+='|chatgpt-codex-connector[bot]:<!-- codex-pull-request-review-summary -->\s+## Codex Review Summary\s+This comment shows the latest Codex review activity on this pull request\.\s+\x7C Review \x7C Status \x7C Commit \x7C Review trigger \x7C\s+\x7C --- \x7C --- \x7C --- \x7C --- \x7C(?:\s+\x7C \S{1,3} \*\*[A-Za-z ]{1,30}\*\* \x7C ✅ \*\*Completed\*\* <relative-time datetime="[0-9TZ:.+-]{1,40}">[0-9TZ:.+-]{1,40}</relative-time> \x7C `[0-9a-f]{7,40}` \x7C [A-Za-z@" ]{1,40} \x7C){1,10}\s+<details> <summary>ℹ️ About Codex in GitHub</summary>\s+<br/>\s+\[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you\s+- Open a pull request for review\s+- Mark a draft as ready\s+- Comment "@codex review" or "@codex security review"\.\s+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings\.\s+</details>'
 NOTICES="${COORD_NOTICE_PATTERNS-$DEFAULT_NOTICES}"
 ALLOW_WILDCARD="${COORD_NOTICE_ALLOW_WILDCARD:-0}"
 status=0

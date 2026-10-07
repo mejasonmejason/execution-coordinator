@@ -283,6 +283,48 @@ has "$out" "INFO      notice by chatgpt-codex-connector[bot]: n7" "literal: REST
 jq -n --arg b "$L1 To continue using code reviews, the auth check in login is missing and tokens leak." '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n8",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "literal: REST fallback injected prose is ACTION"
 has "$out" "ACTION    PR comment by chatgpt-codex-connector[bot]: n8" "literal: REST fallback injected prose is reported ACTION"
+# The Codex "Review Summary" status comment is INFO only when every row is Completed (#36). CS is the real body.
+CS=$(cat <<'BODY'
+<!-- codex-pull-request-review-summary -->
+
+## Codex Review Summary
+
+This comment shows the latest Codex review activity on this pull request.
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:42:18.472750Z">2026-10-07T17:42:18.472750Z</relative-time> | `b199446` | New commits |
+
+
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+<br/>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment "@codex review" or "@codex security review".
+
+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.
+
+</details>
+BODY
+)
+CR=${CS/✅ \*\*Completed\*\*/🔄 **Running** since}
+ROW2=$'\n| 🔒 **Security Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:50:00Z">2026-10-07T17:50:00Z</relative-time> | `b199446` | Comment |'
+C2=${CS/New commits |/New commits |$ROW2}
+t "$(inj "$CS")" 0 "summary: a Codex review summary with every row Completed is INFO"
+out=$("$pt" "$U"); has "$out" "INFO      notice by chatgpt-codex-connector: n1" "summary: the Completed summary is reported INFO"
+t "$(inj "$CR")" 1 "summary: a summary with a Running row is ACTION (READY waits for the review)"
+t "$(inj "$C2")" 0 "summary: two Completed rows are INFO"
+t "$(inj "${C2/🔒 \*\*Security Review\*\* | ✅ \*\*Completed\*\*/🔒 **Security Review** | 🔄 **Running** since}")" 1 "summary: one Running row among Completed rows is ACTION"
+t "$(inj "$CS"$'\n\nP1: src/x.ts:12 leaks the token')" 1 "summary: a finding after the summary is ACTION"
+t "$(inj "${CS/This comment shows/P1: src\/x.ts:12 leaks the token. This comment shows}")" 1 "summary: a finding inside the summary text is ACTION"
+t "$(inj "${CS/✅ \*\*Completed\*\*/✅ **Completed with 2 findings**}")" 1 "summary: an unknown status shape is ACTION"
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' "$CS")"
+"$pt" "$U" >/dev/null; t $? 1 "summary: the same body from another login is ACTION"
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS")"
+"$ready" "$U" --paths "$ALL" >/dev/null; t $? 0 "summary: ready.sh is READY with only a Completed summary"
 # an empty, whitespace-only or pullRequest-less response is unreadable (exit 3), never OK, never READY
 for body in '' '   
   ' '{"data":{"repository":{"pullRequest":null}}}' '{"data":{"viewer":{"login":"me"}}}' '{}'; do
