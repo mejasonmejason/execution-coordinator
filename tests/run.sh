@@ -649,14 +649,16 @@ W=$(mktemp -d); chmod 755 "$W"; mkdir "$W/repo"
 (cd "$W/repo" && git init -q && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m i \
   && "$st" dispatch k --pr "$U" >/dev/null)
 chmod 555 "$W/repo/.coordinator"
+# As root, run copies of the scripts as nobody (root can write any directory, and nobody may not reach $S).
 asuser() {
-  if [ "$(id -u)" -ne 0 ]; then (cd "$W/repo" && "$@")
-  else chown -R nobody "$W"; runuser -u nobody -- env PATH="$PATH" HOME="$W" bash -c 'cd "$1" && shift && "$@"' _ "$W/repo" "$@"; fi
+  if [ "$(id -u)" -ne 0 ]; then (cd "$W/repo" && "$S/scripts/$1" "${@:2}")
+  else cp -R "$S/scripts" "$W/"; chown -R nobody "$W"
+    runuser -u nobody -- env PATH="$PATH" HOME="$W" bash -c 'cd "$1" && shift && "$@"' _ "$W/repo" "$W/scripts/$1" "${@:2}"; fi
 }
 if [ "$(id -u)" -ne 0 ] || command -v runuser >/dev/null; then
-  out=$(COORD_LOCK_TRIES=50 asuser "$st" dispatch k --note x 2>&1); t $? 1 "lock: status.sh fails on a .coordinator it cannot write"
+  out=$(COORD_LOCK_TRIES=50 asuser status.sh dispatch k --note x 2>&1); t $? 1 "lock: status.sh fails on a .coordinator it cannot write"
   has "$out" "is not writable" "lock: status.sh says the directory is not writable"
-  out=$(COORD_LOCK_TRIES=50 asuser "$ready" --key k 2>&1); t $? 3 "lock: ready.sh --key exits 3 on a .coordinator it cannot write"
+  out=$(COORD_LOCK_TRIES=50 asuser ready.sh --key k 2>&1); t $? 3 "lock: ready.sh --key exits 3 on a .coordinator it cannot write"
   has "$out" "is not writable" "lock: ready.sh says the directory is not writable"
 else
   for n in 1 2 3 4; do echo "PASS lock: not-writable case $n (skipped: root without runuser)"; pass=$((pass + 1)); done
