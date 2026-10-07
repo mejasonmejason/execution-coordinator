@@ -9,7 +9,9 @@
 # gh flags before `pr` or `merge` (-R/--repo, --hostname) are understood; any other flag there fails closed.
 # Fails closed when the PR cannot be resolved or read. It only checks; it never runs the merge.
 # Override after verifying a blocker is wrong: prefix the command with COORD_READY_OVERRIDE="<reason>".
-# Only a leading assignment of the merge command counts (`env` may come first); the same text inside an argument does not.
+# Only a leading assignment of the merge command counts (`env` and its -i/-u/-C/-- options may come first); the same
+# text inside an argument does not. A merge in a subshell or a $(...) substitution is still checked; pr ... merge after
+# a variable or substitution in command position ($GH pr merge 5) fails closed.
 # Overrides are allowed and appended to <git root>/.coordinator/overrides.log; report them.
 set -uo pipefail
 
@@ -46,16 +48,37 @@ targets=$(jq -rn --arg cmd "$command" --arg host "${GH_HOST:-github.com}" '
     if $from == null then null else
       [ range($from + 1; $t | length) | select($t[.] == $word) | . as $k
         | select(all(range($from + 1; $k); ($t[.] | isflag) or ($t[. - 1] | isflag))) ][0] end;
-  def override($t; $gi):
-    $t[0:$gi] as $p
-    | if all($p[]; . == "env" or test("^[A-Za-z_][A-Za-z0-9_]*=")) then
-        ([ $p[] | select(startswith("COORD_READY_OVERRIDE=")) | .[21:] | select(length > 0) ] | last)
-      else null end;
+  def isassign: test("^[A-Za-z_][A-Za-z0-9_]*=");
+  # $t: words with subshell and substitution marks removed (for parsing); $u: words only unquoted (for the reason).
+  # The command word of a command: {i, ov} after leading assignments, `env` and env options, or null when env has an
+  # option this does not know (-S/--split-string included). ov is the last COORD_READY_OVERRIDE reason in that prefix.
+  def cmdat($t; $u):
+    if .i >= ($t | length) then null else $t[.i] as $w
+    | if .opts then
+        if $w == "--" then .opts = false | .i += 1 | cmdat($t; $u)
+        elif $w == "-i" or $w == "--ignore-environment" or $w == "-" or ($w | test("^--(unset|chdir)=|^-[uC].")) then
+          .i += 1 | cmdat($t; $u)
+        elif $w == "-u" or $w == "-C" or $w == "--unset" or $w == "--chdir" then .i += 2 | cmdat($t; $u)
+        elif ($w | startswith("-")) then null
+        else .opts = false | cmdat($t; $u) end
+      elif $w == "" then .i += 1 | cmdat($t; $u)
+      elif ($w | isassign) then
+        (if ($u[.i] | startswith("COORD_READY_OVERRIDE=")) and ($u[.i] | length) > 21 then .ov = $u[.i][21:] else . end)
+        | .i += 1 | cmdat($t; $u)
+      elif $w == "env" then .opts = true | .i += 1 | cmdat($t; $u)
+      else {i: .i, ov: .ov} end
+    end;
+  # An override counts only when it is a leading assignment of the command whose command word is $gi.
+  def override($t; $u; $gi):
+    ({i: 0, opts: false, ov: null} | cmdat($t; $u)) as $c
+    | if $c != null and $c.i == $gi then $c.ov else null end;
   $cmd | gsub("\\\\\n"; " ")
   | [ scan("(?:\"(?:[^\"\\\\]|\\\\.)*\"|\u0027[^\u0027]*\u0027|\\\\.|[^\\s;&|])+|&&|\\|\\||[;&|\n]") ]
   | reduce .[] as $w ([[]]; if ($w | isop) then . + [[]] else .[-1] += [$w] end)
   | .[] | select(length > 0)
-  | . as $raw | map(unq) as $t | ($raw | join(" ")) as $seg
+  | . as $raw | map(unq) as $u | ($raw | join(" ")) as $seg
+  # `(gh`, `$(gh`, `` `gh `` and `5)` read as gh and 5, so a merge in a subshell or a substitution is still checked.
+  | ($u | map(sub("^(\\$\\(|[(`{])+"; "") | sub("[)`}]+$"; ""))) as $t
   | [ range(0; $t | length) | select($t[.] | test("(^|/)gh$")) ] as $ghs
   | ([ $ghs[] as $gi | ({i: ($gi + 1), repo: null, host: null} | skip($t)) as $g
        | select($t[$g.i] == "pr") | ($g | .i += 1 | skip($t)) as $p
@@ -73,24 +96,29 @@ targets=$(jq -rn --arg cmd "$command" --arg host "${GH_HOST:-github.com}" '
              else . end))
           | (if .repo != null and $m.host != null and (.repo | split("/") | length) == 2 then "\($m.host)/\(.repo)"
              else .repo end) as $repo
-          | {selector: .sel, repo: $repo, auto: (($a | index("--auto")) != null), override: override($t; $m.gi)} | @json
+          | {selector: .sel, repo: $repo, auto: (($a | index("--auto")) != null), override: override($t; $u; $m.gi)} | @json
         end
     elif ([ $ghs[] | select($t[. + 1] == "api") ] | length) > 0
          and ($seg | test("repos/[^/\\s\"\u0027]+/[^/\\s\"\u0027]+/pulls/[0-9]+/merge\\b")) then
       ($seg | capture("repos/(?<o>[^/\\s\"\u0027]+)/(?<r>[^/\\s\"\u0027]+)/pulls/(?<n>[0-9]+)/merge")) as $m
       | (([ $seg | capture("--hostname[ =](?<h>[^\\s\"\u0027]+)") | .h ][0]) // $host) as $h
       | {selector: "https://\($h)/\($m.o)/\($m.r)/pull/\($m.n)", repo: null, auto: false,
-         override: override($t; [ $ghs[] | select($t[. + 1] == "api") ][0])} | @json
+         override: override($t; $u; [ $ghs[] | select($t[. + 1] == "api") ][0])} | @json
     else
       [ $ghs[] as $gi | loose($t; $gi; "pr") as $pj | loose($t; $pj; "merge") as $mk
         | select($mk != null and (($t[$mk + 1:] | index("--disable-auto")) == null)) | $gi ][0] as $gi
-      | if $gi == null then empty else {unparsed: true, override: override($t; $gi)} | @json end
+      # A command word that is a variable or a substitution ($GH, "$(cmd)") could be gh: pr ... merge after it fails closed.
+      | (({i: 0, opts: false, ov: null} | cmdat($t; $u) | .i)
+         // ([ range(0; $t | length) | select($t[.] != "" and $t[.] != "env" and ($t[.] | isassign | not)) ][0])) as $w0
+      | (if $gi == null and $w0 != null and ($raw[$w0] | test("[$`]")) and (loose($t; loose($t; $w0; "pr"); "merge") as $mk
+             | $mk != null and (($t[$mk + 1:] | index("--disable-auto")) == null)) then $w0 else $gi end) as $gi
+      | if $gi == null then empty else {unparsed: true, override: override($t; $u; $gi)} | @json end
     end' 2>/dev/null) || targets=""
 if [ -z "$targets" ]; then
   # Fail closed on a merge the parser did not find: gh, flags, pr, flags, merge anywhere in the text (for example
-  # inside `bash -c "..."`), or a REST merge path. A plain mention such as `gh pr list --search merge` does not match.
+  # inside `bash -c "..."`, or split by a newline), or a REST merge path. A plain mention such as `gh pr list --search merge` does not match.
   fl='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
-  if grep -qE "(^|[^[:alnum:]_.-])gh${fl}[[:space:]]+pr${fl}[[:space:]]+merge([^[:alnum:]_-]|\$)|pulls/[0-9]+/merge" <<<"$command" \
+  if grep -qE "(^|[^[:alnum:]_.-])gh${fl}[[:space:]]+pr${fl}[[:space:]]+merge([^[:alnum:]_-]|\$)|pulls/[0-9]+/merge" < <(tr '\n' ' ' <<<"$command") \
      && ! grep -q -- '--disable-auto' <<<"$command"; then
     echo "[merge gate] Could not parse which PR this command merges; use \`gh pr merge <PR URL>\` without extra gh flags." >&2; exit 2
   fi

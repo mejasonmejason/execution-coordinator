@@ -415,6 +415,27 @@ g "gh --verbose pr merge $U --squash" "$R"; t $? 2 "gate: unknown gh flag before
 has "$(cat "$BIN/gate.err")" "ould not parse" "gate: unknown gh flag reason on stderr"
 g "bash -c \"gh -R o/r pr merge 7\"" "$R"; t $? 2 "gate: merge inside a quoted bash -c fails closed"
 g "gh pr list --search merge && gh pr view 5 && git merge main" "$R"; t $? 0 "gate: non-merge commands that mention merge allowed"
+# PR #41 review: newlines between the words, a command substitution or variable as the command, and a subshell.
+g "gh
+pr merge $U" "$R"; t $? 2 "gate: newline between gh and pr fails closed"
+g "gh pr
+merge $U" "$R"; t $? 2 "gate: newline between pr and merge fails closed"
+gr "\$(echo gh) pr merge $U" "\$(echo gh) pr merge"
+gr "\`echo gh\` pr merge $U" "backtick echo gh pr merge"
+g "\$GH -R o/r pr merge $U" "$R"; t $? 2 "gate: variable in command position with pr merge fails closed"
+has "$(cat "$BIN/gate.err")" "ould not parse" "gate: variable in command position reason on stderr"
+g "\$GH pr list --search merge" "$R"; t $? 0 "gate: variable in command position without pr merge allowed"
+gr "(gh pr merge $U --squash)" "subshell (gh pr merge)"
+g 'git commit -m "gh pr merge"' "$R"; t $? 2 "gate: quoted gh pr merge text still fails closed"
+# PR #41 Codex review: env options before the override assignment.
+g "env -i COORD_READY_OVERRIDE=\"env i ok\" gh pr merge $U" "$R"; t $? 0 "gate: override after env -i allowed"
+grep -q "env i ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: override after env -i logged"
+g "env -- COORD_READY_OVERRIDE=\"env dashdash ok\" gh pr merge $U" "$R"; t $? 0 "gate: override after env -- allowed"
+grep -q "env dashdash ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: override after env -- logged"
+g "env -u FOO --unset=BAR -C /tmp --chdir=/tmp COORD_READY_OVERRIDE=\"env opts ok\" gh pr merge $U" "$R"; t $? 0 "gate: override after env -u/-C allowed"
+grep -q "env opts ok" "$R/.coordinator/overrides.log"; t $? 0 "gate: override after env -u/-C logged"
+gr "env -S x COORD_READY_OVERRIDE=\"split no\" gh pr merge $U" "override after env -S (not honored)"
+grep -q "split no" "$R/.coordinator/overrides.log"; t $? 1 "gate: override after env -S not logged"
 fixtures; echo '[]' > "$STUB_DIR/files.json"
 g "gh pr merge --squash" "$NR"; t $? 2 "gate: unresolvable merge in a non-repo directory fails closed"
 has "$(cat "$BIN/gate.err")" "could not resolve" "gate: unresolvable reason on stderr"
