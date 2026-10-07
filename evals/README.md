@@ -16,7 +16,9 @@ Run both against two versions (for example v10 and v11) and compare the results.
 | `trigger-queries.json` | Trigger queries in the skill-creator format (`query`, `should_trigger`): 10 should trigger, 12 should not. |
 | `run_behavior.py` | Behavior runner and grader. |
 | `run_trigger.sh` | Trigger runner. Wraps skill-creator's `scripts/run_eval.py`. |
-| `trigger_shim.py` | Fixes for two problems in upstream `run_eval.py` (see below). |
+| `trigger_shim.py` | Replaces upstream `run_eval.py`'s per-query call to fix three problems (see below). |
+| `trigger_grade.py` | Grades a trigger run from the per-call outcome log. `run_trigger.sh` calls it. |
+| `test_evals.py` | Offline tests for the shim, the trigger grading, `run_trigger.sh`, and the behavior grader and runner. They use a fake `claude` CLI and a fake skill-creator: no network and no model calls. Run `python3 -m pytest evals` or `python3 evals/test_evals.py`. CI runs them on every PR. |
 | `results/v10/` | Baseline for v10: `behavior.json`, `summary.md`, `answers/`, `trigger.json`, `trigger-summary.md`. |
 | `results/no-skill/` | The same behavior evals with no skill text. Shows what the skill adds. |
 | `results/v10-skill-only/`, `results/v11-skill-only/` | Issue #19 reproduction in `--load skill-only` mode: the 4 new evals x3 at the top level, the 9 older evals x1 in `existing-x1/`. |
@@ -49,7 +51,7 @@ Every eval has a golden: a known-bad answer that breaks the eval's key rule. The
 
 ## Run the behavior evals
 
-Needs the `claude` CLI (Claude Code) on `PATH` and Python 3.9+. No API key or SDK.
+Needs the `claude` CLI (Claude Code) on `PATH` and Python 3.9+. No SDK. With the default HOME isolation, the CLI's auth must come from the environment (see HOME isolation below).
 
 ```bash
 # One SKILL.md. --skill takes the file or its folder; references/*.md next to it are included.
@@ -67,7 +69,15 @@ python3 evals/run_behavior.py --skill SKILL.md --out /tmp/g --goldens-only
 python3 evals/run_behavior.py --skill SKILL.md --out /tmp/s --only stack-merge-order,5
 ```
 
-Other flags: `--load` (see below), `--model`, `--grader-model`, `--concurrency` (default 4), `--timeout` (seconds per call, default 420), `--retries` (default 1), `--no-goldens`, `--isolate-home`.
+Other flags: `--load` (see below), `--model`, `--grader-model`, `--concurrency` (default 4), `--timeout` (seconds per call, default 420), `--retries` (default 1), `--no-goldens`, `--no-isolate-home` (see below).
+
+### HOME isolation (default on)
+
+By default every `claude -p` call runs with a new empty `HOME`, without `CLAUDE_CODE_SYNC_SKILLS` and without `CLAUDE_CONFIG_DIR` (which would point `claude` back at the user's config folder). So a user-level `CLAUDE.md`, user settings or an installed copy of the skill cannot affect the results.
+
+Auth must then come from the environment, for example `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`). A login that is stored only in `~/.claude` is not visible. The runner does not copy credential files into the empty `HOME`, because a refreshed token there could invalidate the original. If your only auth is that login, pass `--no-isolate-home`. Then check that no user-level `CLAUDE.md`, settings or skill can change the answers.
+
+`behavior.json` records `"home_isolated": true` or `false`, and `summary.md` says "HOME isolated: NO" for a run without isolation. Results from before 2026-10-07 have no `home_isolated` field. They ran with the real `HOME` unless the command passed the old `--isolate-home` flag. `--isolate-home` is still accepted and does nothing.
 
 ### Two loading modes (`--load`)
 
@@ -102,9 +112,10 @@ Calls in `skill-only` mode are the same count as in `all` mode, but each answer 
 How `all` mode works:
 
 1. The answer prompt is: "You have this skill loaded: <SKILL.md and references> User request: <prompt> Respond with what you would do and say. You cannot run tools; describe the actions."
-2. `claude -p` runs with no tools, no skills and no MCP servers, from an empty folder. So the installed copy of the skill and the repository's `CLAUDE.md` cannot leak in.
-3. A separate `claude -p` call grades each answer. It returns strict JSON: `[{"assertion", "pass", "evidence"}]`.
-4. A timeout, a CLI error or an unparsable grade is a FAIL, marked as an error. It is never a pass.
+2. `claude -p` runs with no tools, no skills and no MCP servers, from an empty folder, with an empty `HOME` (see HOME isolation). So the installed copy of the skill, the repository's `CLAUDE.md` and a user-level `CLAUDE.md` cannot leak in. With `--no-isolate-home`, user-level files can leak in.
+3. A separate `claude -p` call grades each answer. It returns strict JSON: `[{"assertion", "pass", "evidence"}]`, one object per expectation, in order.
+4. Each object's `assertion` must match the expectation at the same position. Case, spacing, quote style, a leading number and a final full stop do not count; the words do. A grade for another assertion, or the right ones out of order, is asked again once. A second mismatch is a grader error.
+5. A timeout, a CLI error, an unparsable grade or a mismatched assertion is a FAIL, marked as an error. It is never a pass. Any error makes the runner exit 1.
 
 Calls: (runs x 13 answers) + (runs x 13 grades) + 13 golden grades, plus retries. `--only` cuts all three.
 
@@ -123,20 +134,27 @@ How it works:
 
 - `run_eval.py` adds the description under test as a temporary command, runs `claude -p "<query>"`, and checks whether the model's first tool call opens that command.
 - Everything runs in an empty scratch folder. Nothing is written into this repository.
-- `claude -p` runs with an empty `HOME` and without skill sync. Otherwise an installed `execution-coordinator` skill competes with the description under test. Set `COORD_EVAL_ISOLATE_HOME=0` only if your auth needs the real `HOME`, and then check that no copy of the skill is installed.
-- A query passes when its trigger rate is on the right side of 0.5. A query with a timed-out run is INCONCLUSIVE and does not pass.
+- `claude -p` runs with an empty `HOME`, without skill sync and without `CLAUDE_CONFIG_DIR`. Otherwise an installed `execution-coordinator` skill competes with the description under test. Auth must come from the environment, as for the behavior evals. Set `COORD_EVAL_ISOLATE_HOME=0` only if your auth needs the real `HOME`, and then check that no copy of the skill is installed. `trigger.json` records `meta.home_isolated`, and `trigger-summary.md` labels the run.
+- Every `claude -p` call gets an outcome: success, error or timeout. Only successful calls are graded. A query passes when its trigger rate over its successful runs is on the right side of 0.5.
+- A query with an errored run is ERROR. A query with a timed-out run is INCONCLUSIVE. Neither one passes, and neither one counts as a false trigger.
+- The hit rate and the false-trigger rate count every successful call, also the successful calls of an INCONCLUSIVE query. Precision and recall count only conclusive queries (no error, no timeout). A rate with no graded call is `null` in `trigger.json` and "n/a" in the summary.
+- If any call errored, or no call was graded (for example every call timed out), the run is invalid: `trigger.json` has `summary.valid: false`, `trigger-summary.md` starts with "INVALID RUN", and `run_trigger.sh` exits 1. Do not quote the numbers from an invalid run.
+- `run_eval.py`'s own output goes to `trigger-raw.json`. `trigger.json` is written only after grading finishes, so a crash leaves no `trigger.json` behind.
 
-`trigger_shim.py` fixes two problems in upstream `run_eval.py` (revision 683bc88, 2026-10-05):
+`trigger_shim.py` fixes three problems in upstream `run_eval.py` (revision 683bc88, 2026-10-05):
 
 1. **Shared command folder.** Upstream writes every worker's temporary command into one `.claude/commands` folder. With several workers, each `claude -p` sees several copies of the skill and often picks another worker's copy, which counts as "not triggered". Measured here: with 5 workers v10 scored a 17% hit rate. With one folder per call it scored 100%. The shim gives each call its own folder.
 2. **Timeouts.** Upstream reports a timeout as "not triggered", which passes a should-not-trigger query. The shim records timeouts, and the runner marks those queries INCONCLUSIVE.
+3. **Fast failures.** Upstream also reports a failed call as "not triggered". An auth error or an unknown model fails in about one second, so a check on elapsed time does not see it. Measured 2026-10-07: with `--model no-such-model`, a should-not-trigger query scored PASS and the run exited 0. The shim now reads the stream: an assistant message with an `error` field, a result with `is_error: true` or a subtype other than `success`, or an exit before any trigger decision is an error. Each call's outcome goes to `trigger-outcomes.jsonl`, and `trigger_grade.py` grades from that file.
 
 ## Read the results
 
 - `summary.md`: pass rate per eval (mean, min to max over runs), passed runs per expectation with the grader's evidence, answer length in words, seconds and output tokens, and the golden table.
-- `behavior.json`: everything, including each run's expectations, evidence, token counts and cost.
+- `behavior.json`: everything, including each run's expectations, evidence, token counts and cost. Runs from 2026-10-07 on also keep the grader's raw reply for each attempt (`grader_raw`, `grader_attempts`).
 - `answers/<name>.md`: the raw answers. Read them when a number moves.
 - `trigger-summary.md`: hit rate on should-trigger queries, false-trigger rate on should-not queries, precision and recall, and one row per query.
+- `trigger-raw.json`: `run_eval.py`'s output before grading. Its pass flags and trigger counts treat failed calls as "not triggered"; do not read results from it.
+- `trigger-outcomes.jsonl`: one line per `claude -p` call, with its outcome and, for an error, the reason. Older results have `trigger-timeouts.txt` instead (timeouts only).
 
 Compare versions on the same model. Judge by trend: one run per eval is noisy, so use `--runs 3` or more before you call a difference real. A drop in an eval's mean pass rate, or a new false trigger, is a regression to read in the raw answers.
 

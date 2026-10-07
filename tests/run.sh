@@ -72,7 +72,7 @@ fixtures() {
   echo '[{"filename":"src/a.ts","status":"modified"},{"filename":"tests/x.test.ts","status":"removed"},
     {"filename":".github/workflows/ci.yml","status":"modified"},{"filename":"docs/readme.md","status":"added"}]' > "$STUB_DIR/files.json"
   echo '{"status":"ahead"}' > "$STUB_DIR/compare.json"
-  echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"url":"x","reviewThreads":{"nodes":[]},
+  echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"url":"x","headRefOid":"'"$H"'","reviewThreads":{"nodes":[]},
     "comments":{"nodes":[]},"reviews":{"nodes":[]}}}}}' > "$STUB_DIR/graphql.json"
 }
 setj() { local f="$STUB_DIR/$1" tmp; tmp=$(mktemp); jq "$2" "$f" > "$tmp" && mv "$tmp" "$f"; }
@@ -225,7 +225,7 @@ has "$out" "ACTION    PR comment by chatgpt-codex-connector" "notice: with the d
 setj graphql.json ".data.repository.pullRequest.reviews.nodes = [] | .data.repository.pullRequest.comments.nodes = $(cm 'acme-bot' 'Build quota: 12:30 left')"
 out=$(COORD_NOTICE_PATTERNS="acme-bot:Build quota: \\d+:\\d+ left" "$pt" "$U"); t $? 0 "notice: a custom pattern matches (colon in the regex)"
 has "$out" "INFO      notice by acme-bot" "notice: a custom pattern is INFO"
-out=$(COORD_NOTICE_PATTERNS="other:zzz|*:build quota.*" "$pt" "$U"); t $? 0 "notice: a wildcard login in a pattern list matches"
+out=$(COORD_NOTICE_ALLOW_WILDCARD=1 COORD_NOTICE_PATTERNS="other:zzz|*:build quota.*" "$pt" "$U"); t $? 0 "notice: an allowed wildcard login in a pattern list matches"
 # the REST fallback keeps the [bot] suffix on the login
 fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
 echo "[{\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"$QN\",\"html_url\":\"n2\",\"created_at\":\"2026-01-01T00:00:00Z\"}]" > "$STUB_DIR/icomments.json"
@@ -283,6 +283,70 @@ has "$out" "INFO      notice by chatgpt-codex-connector[bot]: n7" "literal: REST
 jq -n --arg b "$L1 To continue using code reviews, the auth check in login is missing and tokens leak." '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n8",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "literal: REST fallback injected prose is ACTION"
 has "$out" "ACTION    PR comment by chatgpt-codex-connector[bot]: n8" "literal: REST fallback injected prose is reported ACTION"
+# The Codex "Review Summary" status comment is INFO only when every row is Completed (#36). CS is the real body.
+CS=$(cat <<'BODY'
+<!-- codex-pull-request-review-summary -->
+
+## Codex Review Summary
+
+This comment shows the latest Codex review activity on this pull request.
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:42:18.472750Z">2026-10-07T17:42:18.472750Z</relative-time> | `abc1234` | New commits |
+
+
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+<br/>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment "@codex review" or "@codex security review".
+
+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.
+
+</details>
+BODY
+)
+CR=${CS/✅ \*\*Completed\*\*/🔄 **Running** since}
+ROW2=$'\n| 🔒 **Security Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:50:00Z">2026-10-07T17:50:00Z</relative-time> | `abc1234` | Comment |'
+C2=${CS/New commits |/New commits |$ROW2}
+t "$(inj "$CS")" 0 "summary: a Codex review summary with every row Completed is INFO"
+out=$("$pt" "$U"); has "$out" "INFO      notice by chatgpt-codex-connector: n1" "summary: the Completed summary is reported INFO"
+t "$(inj "$CR")" 1 "summary: a summary with a Running row is ACTION (READY waits for the review)"
+t "$(inj "$C2")" 0 "summary: two Completed rows are INFO"
+t "$(inj "${C2/🔒 \*\*Security Review\*\* | ✅ \*\*Completed\*\*/🔒 **Security Review** | 🔄 **Running** since}")" 1 "summary: one Running row among Completed rows is ACTION"
+t "$(inj "$CS"$'\n\nP1: src/x.ts:12 leaks the token')" 1 "summary: a finding after the summary is ACTION"
+t "$(inj "${CS/This comment shows/P1: src\/x.ts:12 leaks the token. This comment shows}")" 1 "summary: a finding inside the summary text is ACTION"
+t "$(inj "${CS/✅ \*\*Completed\*\*/✅ **Completed with 2 findings**}")" 1 "summary: an unknown status shape is ACTION"
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' "$CS")"
+"$pt" "$U" >/dev/null; t $? 1 "summary: the same body from another login is ACTION"
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS")"
+"$ready" "$U" --paths "$ALL" >/dev/null; t $? 0 "summary: ready.sh is READY with only a Completed summary"
+# Codex edits the summary in place, so it keeps its first createdAt. A later agent reply must not hide a Running edit.
+AG='[{"author":{"login":"me"},"body":"done 🤖","url":"a1","createdAt":"2026-01-02T00:00:00Z"}]'
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CR") + $AG"
+out=$("$pt" "$U"); t $? 1 "summary: a Running summary edited after an agent reply is still ACTION"
+has "$out" "ACTION    PR comment by chatgpt-codex-connector: n1" "summary: the edited Running summary is reported ACTION"
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS") + $AG"
+"$pt" "$U" >/dev/null; t $? 0 "summary: a Completed summary before an agent reply is INFO"
+t "$(inj "${CS/📝 \*\*Code Review\*\*/📝 **Auth token leaks in login**}")" 1 "summary: an unknown review name is ACTION"
+# A Completed row must name the current head (Codex review on #37)
+t "$(inj "${CS/\`abc1234\`/\`b199446\`}")" 1 "summary: a Completed row for an older commit is ACTION"
+t "$(inj "${C2/\`abc1234\` | Comment/\`b199446\` | Comment}")" 1 "summary: one row for an older commit among current rows is ACTION"
+fixtures; setj graphql.json "del(.data.repository.pullRequest.headRefOid) | .data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS")"
+"$pt" "$U" >/dev/null; t $? 1 "summary: with no head SHA a Completed summary is ACTION"
+# Only the Codex login gets the edited-status exception; a quote of the marker by anyone else follows the time rule
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' "quoting <!-- codex-pull-request-review-summary --> here") + $AG"
+"$pt" "$U" >/dev/null; t $? 0 "summary: another login quoting the marker before an agent reply is cleared"
+# REST fallback reads the head from the pulls endpoint
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
+jq -n --arg b "$CS" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n9",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 0 "summary: REST fallback Completed summary for the head is INFO"
+jq -n --arg b "${CS/\`abc1234\`/\`b199446\`}" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n9",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "summary: REST fallback Completed summary for an older commit is ACTION"
 # an empty, whitespace-only or pullRequest-less response is unreadable (exit 3), never OK, never READY
 for body in '' '   
   ' '{"data":{"repository":{"pullRequest":null}}}' '{"data":{"viewer":{"login":"me"}}}' '{}'; do
@@ -292,20 +356,43 @@ for body in '' '
   hasnt "$out" "OK " "empty: response '$(printf %s "$body" | tr -d '\n ' | head -c 40)' never prints OK"
   out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "empty: ready.sh is not READY on response '$(printf %s "$body" | tr -d '\n ' | head -c 40)'"
 done
+# a response with no viewer login cannot detect UNSENT, so it is unreadable (exit 3), never OK (issue #32)
+for vw in 'null' '{"login":null}' '{"login":""}' 'absent'; do
+  fixtures
+  if [ "$vw" = absent ]; then setj graphql.json 'del(.data.viewer)'; else setj graphql.json ".data.viewer = $vw"; fi
+  out=$("$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "viewer: viewer $vw exits 3"
+  has "$out" "no viewer" "viewer: viewer $vw names the missing viewer"
+  hasnt "$out" "OK " "viewer: viewer $vw never prints OK"
+done
+fixtures; setj graphql.json '.data.viewer = null'
+out=$("$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "viewer: ready.sh is not READY with no viewer login"
 fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"; : > "$STUB_DIR/user.json"
 out=$(STUB_NO_GRAPHQL=1 "$pt" "$U" 2>&1); t $? 3 "empty: REST fallback with an empty user response exits 3"
 hasnt "$out" "OK " "empty: REST fallback empty response never prints OK"
-# a wildcard login with a match-all regex fails closed; a notice-only wildcard still works
+# a wildcard login with a match-all regex fails closed even when wildcards are allowed (the probe guard)
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'P1: real bug in auth')"
 for wc in '*:.*' '*:.+' '*:(?s:.*)'; do
-  out=$(COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
-  t "$rc" 3 "wildcard: COORD_NOTICE_PATTERNS='$wc' exits 3"
-  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: '$wc' names the wildcard in the ERROR line"
-  hasnt "$out" "INFO" "wildcard: '$wc' never turns a comment into INFO"
+  out=$(COORD_NOTICE_ALLOW_WILDCARD=1 COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "wildcard: allowed COORD_NOTICE_PATTERNS='$wc' exits 3"
+  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: allowed '$wc' names the wildcard in the ERROR line"
+  hasnt "$out" "INFO" "wildcard: allowed '$wc' never turns a comment into INFO"
 done
+# a wildcard login is rejected by default, even one the probes miss (issue #32)
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'P1: real bug on line 12')"
+for wc in '*:build quota.*' '*:(?s:.*)\d' 'other:zzz|*:build quota.*'; do
+  out=$(COORD_NOTICE_PATTERNS="$wc" "$pt" "$U" 2>&1); rc=$?
+  t "$rc" 3 "wildcard: default COORD_NOTICE_PATTERNS='$wc' exits 3"
+  has "$out" "ERROR  invalid COORD_NOTICE_PATTERNS (wildcard login" "wildcard: default '$wc' names the wildcard in the ERROR line"
+  has "$out" "COORD_NOTICE_ALLOW_WILDCARD=1" "wildcard: default '$wc' names the opt-in variable"
+  hasnt "$out" "INFO" "wildcard: default '$wc' never turns a comment into INFO"
+  hasnt "$out" "OK " "wildcard: default '$wc' never prints OK"
+done
+out=$(COORD_NOTICE_ALLOW_WILDCARD=0 COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 3 "wildcard: COORD_NOTICE_ALLOW_WILDCARD=0 still rejects a wildcard"
+out=$(COORD_NOTICE_PATTERNS='*:build quota.*' "$ready" "$U" --paths "$ALL" 2>&1); t $? 1 "wildcard: ready.sh is not READY with a default-rejected wildcard"
 setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' 'Build quota low')"
-out=$(COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 0 "wildcard: '*:build quota.*' still works"
-has "$out" "INFO      notice by alex" "wildcard: '*:build quota.*' still reports INFO"
+out=$(COORD_NOTICE_ALLOW_WILDCARD=1 COORD_NOTICE_PATTERNS='*:build quota.*' "$pt" "$U" 2>&1); t $? 0 "wildcard: allowed '*:build quota.*' works"
+has "$out" "INFO      notice by alex" "wildcard: allowed '*:build quota.*' reports INFO"
 # a broken COORD_NOTICE_PATTERNS fails closed: exit 3 with an ERROR line, never OK and never READY
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' 'P1: this loop never exits')"
 out=$(COORD_NOTICE_PATTERNS='chatgpt-codex-connector:[' "$pt" "$U" 2>&1); rc=$?
