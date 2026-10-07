@@ -100,7 +100,7 @@ flowchart TD
 
 ## 4. Dispatch records
 
-`status.sh` refuses `accepted` until `ready.sh --key` has recorded a passing READY check for that dispatch (exit 4).
+`status.sh` refuses `accepted` (exit 4) until `ready.sh --key` has recorded a passing READY check for that dispatch. The verdict must cover the current PR head, the dispatch paths and its run, and must not come from `--allow-pending`. A change to the dispatch PR, paths or run clears the verdict.
 
 ```mermaid
 stateDiagram-v2

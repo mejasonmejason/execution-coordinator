@@ -23,6 +23,9 @@ sj() { jq -r "$1" "$R/.coordinator/status.json"; }
 cat > "$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 # Fixture-backed gh: `gh api <path>` and `gh pr view`. A missing fixture file means HTTP 404.
+# Every call is logged to $STUB_DIR/calls.log. A $STUB_DIR/side.sh runs once, at the start of the next call.
+echo "$*" >> "$STUB_DIR/calls.log"
+if [ -f "$STUB_DIR/side.sh" ]; then mv "$STUB_DIR/side.sh" "$STUB_DIR/side.run"; bash "$STUB_DIR/side.run"; fi
 jqf=""; path=""; sub="$1"; shift
 if [ "$sub" = "pr" ]; then
   [ "${STUB_PRVIEW:-0}" = "1" ] || { echo "no pull requests found" >&2; exit 1; }
@@ -456,6 +459,148 @@ t "$(sj .dispatches.t1.ready.ok)" false "ready --key records the verdict"
 "$ready" --key t1 >/dev/null; t $? 0 "ready --key passes with widened paths"
 "$st" dispatch t1 --state accepted >/dev/null; t $? 0 "accepted allowed after a READY pass"
 "$ready" --key nope >/dev/null 2>&1; t $? 3 "ready --key with an unknown dispatch exits 3"
+
+# ---- acceptance is bound to the PR, head, scope and run that READY checked (#22) ------------------------------
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+H2=def4567890def4567890def4567890def4567890
+acc() { "$st" dispatch "$1" --state accepted >/dev/null 2>&1; }
+"$st" dispatch ba --pr "$U" --paths "$ALL" --run-id r1 >/dev/null
+"$ready" --key ba >/dev/null; t $? 0 "bind: READY passes for the dispatch"
+t "$(sj '.dispatches.ba.ready | [.ok, .pr, .head, (.paths | join(",")), .allow_pending, .run] | map(tostring) | join(" ")')" \
+  "true $U $H $ALL false r1" "bind: the verdict records pr, head, paths, allow_pending and run"
+# (a) the remote head moved after READY
+setj pr.json ".head.sha = \"$H2\""
+acc ba; t $? 4 "bind (a): accepted refused after the PR head moved"
+setj pr.json ".head.sha = \"$H\""
+"$st" dispatch ba --pr "$U" --paths "$ALL" --run-id r1 >/dev/null
+t "$(sj .dispatches.ba.ready.ok)" true "bind: re-sending the same pr, paths and run keeps the verdict"
+setj pr.json '.state = "closed" | .merged = true'
+acc ba; t $? 0 "bind: accepted allowed on a merged PR whose head READY checked"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch bh --pr "$U" >/dev/null; "$ready" --key bh >/dev/null
+rm "$STUB_DIR/pr.json"; acc bh; t $? 4 "bind: accepted refused when the PR head cannot be read"
+# (b) the key is reused for another PR, run or --paths scope
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+for f in "--pr https://github.com/o/r/pull/8" "--run-id r2" "--paths src/**"; do
+  k="bb${f%% *}"; "$st" dispatch "$k" --pr "$U" --paths "$ALL" --run-id r1 >/dev/null; "$ready" --key "$k" >/dev/null
+  # shellcheck disable=SC2086
+  "$st" dispatch "$k" $f >/dev/null
+  t "$(sj ".dispatches[\"$k\"].ready // \"cleared\"")" cleared "bind (b): dispatch $f clears the verdict"
+  acc "$k"; t $? 4 "bind (b): accepted refused after dispatch $f"
+done
+"$st" dispatch bp --pr "$U" --paths "$ALL" >/dev/null
+"$ready" --key bp --paths "**" >/dev/null; t $? 0 "bind (b): READY with a different --paths scope passes"
+acc bp; t $? 4 "bind (b): accepted refused when READY checked another --paths scope"
+"$st" dispatch bo --pr "$U" --paths "$ALL" >/dev/null
+"$ready" "o/r#8" --key bo >/dev/null; t $? 0 "bind (b): READY on another PR passes"
+t "$(sj .dispatches.bo.pr)" "$U" "bind (b): READY on another PR does not rewrite the dispatch PR"
+acc bo; t $? 4 "bind (b): accepted refused when READY checked another PR"
+"$st" dispatch bs --pr "o/r#7" --paths "$ALL" >/dev/null; "$ready" --key bs >/dev/null
+acc bs; t $? 0 "bind: an owner/repo#N dispatch PR matches the READY URL"
+# (c) a later READY is unreadable (exit 3)
+"$st" dispatch bc --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bc >/dev/null
+rm "$STUB_DIR/pr.json"; "$ready" --key bc >/dev/null 2>&1; t $? 3 "bind (c): a later READY is unreadable"
+t "$(sj .dispatches.bc.ready.ok)" false "bind (c): an unreadable READY replaces the old verdict with ok=false"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+acc bc; t $? 4 "bind (c): accepted refused after an unreadable READY"
+# (d) READY recorded with --allow-pending while a normal READY fails
+setj runs.json '.check_runs[0].status = "queued"'
+"$st" dispatch bd --pr "$U" --paths "$ALL" >/dev/null
+"$ready" --key bd >/dev/null; t $? 1 "bind (d): a normal READY fails on a pending required check"
+"$ready" --key bd --allow-pending >/dev/null; t $? 0 "bind (d): READY --allow-pending passes"
+t "$(sj .dispatches.bd.ready.allow_pending)" true "bind (d): the verdict records allow_pending"
+acc bd; t $? 4 "bind (d): accepted refused on an --allow-pending verdict"
+# PR #40 review: the gh head read, closed PRs, case and order, accepted records, races and the lock.
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch bg --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bg >/dev/null
+: > "$STUB_DIR/calls.log"; acc bg; t $? 0 "bind: accepted after a READY pass"
+has "$(cat "$STUB_DIR/calls.log")" "api --hostname github.com repos/o/r/pulls/7 " "bind: the head read uses REST on the dispatch PR"
+"$st" dispatch bx --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bx >/dev/null
+setj pr.json '.state = "closed" | .merged = false'
+acc bx; t $? 4 "bind: accepted refused on a PR closed without merging"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch bu --pr "O/R#7" --paths "$ALL" >/dev/null; "$ready" "$U" --key bu >/dev/null
+acc bu; t $? 0 "bind: owner and repo compare without case"
+"$st" dispatch bq --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bq --paths "docs/*.md, .github/**,tests/**,src/**" >/dev/null
+acc bq; t $? 0 "bind: --paths compare as a set, not in order"
+# An accepted dispatch: later updates skip the gate, a post-merge READY keeps the verdict, binding changes are refused.
+rm "$STUB_DIR/pr.json"
+"$st" dispatch bg --note "merged" >/dev/null 2>&1; t $? 0 "accepted: --note works while gh cannot read the PR"
+fixtures; echo '[]' > "$STUB_DIR/files.json"; setj pr.json '.state = "closed" | .merged = true'
+"$ready" --key bg >/dev/null; t $? 1 "accepted: a post-merge READY is NOT READY"
+t "$(sj .dispatches.bg.ready.ok)" true "accepted: READY --key leaves the verdict of an accepted dispatch alone"
+"$st" dispatch bg --note "verified" >/dev/null 2>&1; t $? 0 "accepted: --note works after a post-merge READY"
+"$st" dispatch bg --paths "src/**" >/dev/null 2>&1; t $? 4 "accepted: --paths change refused while accepted"
+t "$(sj '.dispatches.bg.paths | join(",")')" "$ALL" "accepted: the refused change leaves the record unchanged"
+"$st" dispatch bg --state rejected --paths "src/**" >/dev/null 2>&1; t $? 0 "accepted: --paths change allowed when --state leaves accepted"
+# A READY recorded while acceptance reads the PR head is not erased (compare-and-swap).
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch bw --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bw >/dev/null
+printf '%s\n' "echo '[{\"state\":\"CHANGES_REQUESTED\",\"user\":{\"login\":\"rev\"}}]' > '$STUB_DIR/reviews.json'" \
+  "cd '$R' && '$ready' --key bw >/dev/null 2>&1" > "$STUB_DIR/side.sh"
+out=$("$st" dispatch bw --state accepted 2>&1); rc=$?
+[ "$rc" -ne 0 ]; t $? 0 "race: accepted refused when the record changed during the head read"
+has "$out" "dispatch changed; retry" "race: the refusal says to retry"
+t "$(sj '[.dispatches.bw.state, .dispatches.bw.ready.ok] | join(",")')" "running,false" "race: the newer verdict survives"
+echo '[]' > "$STUB_DIR/reviews.json"
+# Read-modify-write holds a mkdir lock. A live holder blocks; a dead holder's lock is cleared.
+mkdir "$R/.coordinator/.lock"; echo $$ > "$R/.coordinator/.lock/pid"
+COORD_LOCK_TRIES=3 "$st" dispatch bw --note x >/dev/null 2>&1; [ $? -ne 0 ]; t $? 0 "lock: status.sh fails while a live process holds the lock"
+t "$(sj '.dispatches.bw.note // "none"')" none "lock: nothing written while locked"
+COORD_LOCK_TRIES=3 "$ready" --key bw >/dev/null 2>&1; t $? 3 "lock: ready.sh --key exits 3 when it cannot record the verdict"
+sh -c 'exit 0' & dead=$!; wait "$dead"; echo "$dead" > "$R/.coordinator/.lock/pid"
+COORD_LOCK_TRIES=3 "$st" dispatch bw --note y >/dev/null 2>&1; t $? 0 "lock: a dead holder's lock is cleared"
+t "$(sj .dispatches.bw.note)" y "lock: the write lands after clearing a stale lock"
+[ ! -e "$R/.coordinator/.lock" ]; t $? 0 "lock: released after the write"
+# The race also covers a concurrent --run-id change.
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch br --pr "$U" --paths "$ALL" --run-id r1 >/dev/null; "$ready" --key br >/dev/null
+printf '%s\n' "cd '$R' && '$st' dispatch br --run-id r2 >/dev/null 2>&1" > "$STUB_DIR/side.sh"
+out=$("$st" dispatch br --state accepted 2>&1); [ $? -ne 0 ]; t $? 0 "race: accepted refused when --run-id changed during the head read"
+t "$(sj '[.dispatches.br.state, .dispatches.br.run_id] | join(",")')" "running,r2" "race: the concurrent --run-id change survives"
+# Every exit 3 with --key clears the verdict, usage errors included.
+"$st" dispatch bz --pr "$U" --paths "$ALL" >/dev/null
+for a in "--bogus" "--paths"; do
+  "$ready" --key bz >/dev/null
+  "$ready" --key bz $a >/dev/null 2>&1; t $? 3 "usage: ready.sh --key bz $a exits 3"
+  t "$(sj '.dispatches.bz.ready | [.ok, .unreadable] | map(tostring) | join(",")')" "false,true" "usage: ready.sh --key bz $a records ok=false"
+done
+# A READY run that does not finish leaves ok=false: the record says in progress until the verdict lands.
+"$ready" --key bz >/dev/null
+printf '%s\n' "jq -c '.dispatches.bz.ready | [.ok, .in_progress]' '$R/.coordinator/status.json' > '$STUB_DIR/snap'" > "$STUB_DIR/side.sh"
+"$ready" --key bz >/dev/null; t "$(cat "$STUB_DIR/snap")" "[false,true]" "progress: a running READY shows ok=false, in progress"
+t "$(sj .dispatches.bz.ready.ok)" true "progress: the finished READY replaces the in-progress record"
+cp "$STUB_DIR/pr.json" "$STUB_DIR/pr.bak"; echo '<html>' > "$STUB_DIR/pr.json"
+"$ready" --key bz >/dev/null 2>&1; t $? 3 "progress: a 200 non-JSON PR body is unreadable"
+t "$(sj .dispatches.bz.ready.ok)" false "progress: a non-JSON PR body leaves ok=false"
+cp "$STUB_DIR/pr.bak" "$STUB_DIR/pr.json"; acc bz; t $? 4 "progress: accepted refused after a non-JSON PR read"
+# Scope and review reads fail closed.
+echo '[{"filename":"evil/x.sh","status":"modified"},{"status":"modified"}]' > "$STUB_DIR/files.json"
+"$ready" "$U" --paths "src/**" >/dev/null 2>&1; t $? 3 "scope: a file entry without a filename is unreadable"
+echo '[]' > "$STUB_DIR/files.json"; rm "$STUB_DIR/reviews.json"
+"$ready" "$U" --paths "$ALL" >/dev/null 2>&1; t $? 3 "reviews: an unreadable review list is unreadable"
+echo '[]' > "$STUB_DIR/reviews.json"
+# Strict verdict checks at acceptance.
+ed() { local tmp; tmp=$(mktemp); jq "$1" "$R/.coordinator/status.json" > "$tmp" && mv "$tmp" "$R/.coordinator/status.json"; }
+for e in 'del(.allow_pending)' '.blockers = ["x"]' '.unreadable = true' '.ok = "true"' '.key = "other"' 'del(.key)'; do
+  "$st" dispatch bv --state awaiting-acceptance --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bv >/dev/null
+  ed ".dispatches.bv.ready |= ($e)"; acc bv; t $? 4 "strict: accepted refused on a verdict with $e"
+done
+"$st" dispatch bk --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bv >/dev/null
+ed '.dispatches.bk.ready = .dispatches.bv.ready'; acc bk; t $? 4 "strict: a verdict copied from another dispatch is refused"
+"$ready" --key bk >/dev/null; setj pr.json '.head.sha = null'; ed '.dispatches.bk.ready.head = "null"'
+acc bk; t $? 4 "strict: a null PR head is refused"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+# Equivalent PR forms and path order do not clear the verdict.
+"$st" dispatch bf --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bf >/dev/null
+for f in "o/r#7" "github.com/o/r#7" "$U/files" "https://github.com/O/R/pull/7"; do
+  "$st" dispatch bf --pr "$f" >/dev/null; t "$(sj .dispatches.bf.ready.ok)" true "forms: --pr $f keeps the verdict"
+done
+"$st" dispatch bf --paths "docs/*.md,src/**,.github/**,tests/**" >/dev/null; t "$(sj .dispatches.bf.ready.ok)" true "forms: reordered --paths keep the verdict"
+acc bf; t $? 0 "forms: accepted after equivalent PR and path changes"
+# An accepted dispatch with an old-shape verdict still takes --note.
+ed ".dispatches.bl = {state:\"accepted\", pr:\"$U\", ready:{ok:true, head:\"$H\"}}"
+"$st" dispatch bl --note "merged, verified" >/dev/null 2>&1; t $? 0 "legacy: an accepted old-shape dispatch takes --note"
 
 # ---- merge gate ----------------------------------------------------------------------------------------------
 g() { jq -n --arg c "$1" --arg d "$2" '{tool_input:{command:$c}, cwd:$d}' | "$gate" 2> "$BIN/gate.err"; }

@@ -144,7 +144,7 @@ Each executor gets one task, branch, worktree and PR. Its brief quotes the agent
 2. The coordinator re-runs the brief's validation commands itself.
 3. A fresh-context, read-only reviewer gets the criteria and `base_sha..head`, not the executor's account. PASS needs a `path:line` per criterion; UNCERTAIN blocks. Auth, security, secrets, IAM, payments, ledger, data migrations, infrastructure, or high risk (privilege, data integrity, uptime, weakened gates) need three independent perspectives and 2 of 3 PASS; otherwise one PASS. Judgment may raise this floor, never lower it. Any verified critical finding blocks.
 
-Mark `--state accepted` only after all three pass (`status.sh` also demands a passing `ready.sh --key` verdict); otherwise mark `rejected` with exact findings.
+Mark `--state accepted` only after all three pass (`status.sh` demands a `ready.sh --key` pass on this head, paths and run); otherwise mark `rejected` with exact findings.
 
 ## Event loop and sweep
 
