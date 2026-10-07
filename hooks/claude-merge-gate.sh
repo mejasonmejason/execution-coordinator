@@ -6,8 +6,10 @@
 #       "command": "/path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] } ] } }
 # On `gh pr merge` (not --disable-auto) or `gh api .../pulls/N/merge`, it resolves the PR and runs scripts/ready.sh
 # on the current head (--allow-pending for --auto). Exit 0 allows; exit 2 blocks with the reason on stderr.
+# gh flags before `pr` or `merge` (-R/--repo, --hostname) are understood; any other flag there fails closed.
 # Fails closed when the PR cannot be resolved or read. It only checks; it never runs the merge.
 # Override after verifying a blocker is wrong: prefix the command with COORD_READY_OVERRIDE="<reason>".
+# Only a leading assignment of the merge command counts (`env` may come first); the same text inside an argument does not.
 # Overrides are allowed and appended to <git root>/.coordinator/overrides.log; report them.
 set -uo pipefail
 
@@ -20,54 +22,100 @@ cwd=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)
 [ -n "$cwd" ] && [ -d "$cwd" ] || cwd=$PWD
 [ -n "$command" ] || exit 0
 
-# One JSON object per merge found: {selector, repo, auto}. Mirrors how gh parses its arguments closely enough
-# to find the PR; anything it cannot place is resolved by `gh pr view` in the session's directory.
+# One JSON object per merge found: {selector, repo, auto, override}, or {unparsed, override} for a merge whose flags the
+# parser cannot place. Mirrors how gh parses its arguments closely enough to find the PR; anything it cannot place is
+# resolved by `gh pr view` in the session's directory. The command is split into words and into commands by a
+# quote-aware scan, so text inside a quoted argument (a --body) is never read as a command, an operator or an override.
+# An override counts only as a leading assignment of the merge command itself (optionally after `env`).
 targets=$(jq -rn --arg cmd "$command" --arg host "${GH_HOST:-github.com}" '
-  def strip: sub("^[\"\u0027]"; "") | sub("[\"\u0027]$"; "");
-  $cmd | splits("&&|\\|\\||;|\n|\\|")
-  | . as $seg
-  | [ scan("(?:\"[^\"]*\"|\u0027[^\u0027]*\u0027|\\S)+") ] as $t
-  | ([ range(0; $t | length) | select(($t[.] | test("(^|/)gh$")) and $t[. + 1] == "pr" and $t[. + 2] == "merge") ][0]) as $gi
-  | if $gi != null then
-      ($t[$gi + 3:] | map(strip)) as $a
+  def unq: gsub("\"(?<a>(?:[^\"\\\\]|\\\\.)*)\"|\u0027(?<b>[^\u0027]*)\u0027|\\\\(?<c>.)"; "\(.a // "")\(.b // "")\(.c // "")");
+  def isop: . == "&&" or . == "||" or . == ";" or . == "&" or . == "|" or . == "\n";
+  def isflag: startswith("-");
+  # gh flags that may sit between `gh`, `pr` and `merge`; anything else there is unknown and fails closed.
+  def skip($t):
+    if .i >= ($t | length) then .
+    elif $t[.i] == "-R" or $t[.i] == "--repo" then .repo = $t[.i + 1] | .i += 2 | skip($t)
+    elif ($t[.i] | startswith("--repo=")) then .repo = $t[.i][7:] | .i += 1 | skip($t)
+    elif ($t[.i] | startswith("-R=")) then .repo = $t[.i][3:] | .i += 1 | skip($t)
+    elif ($t[.i] | test("^-R.")) then .repo = $t[.i][2:] | .i += 1 | skip($t)
+    elif $t[.i] == "--hostname" then .host = $t[.i + 1] | .i += 2 | skip($t)
+    elif ($t[.i] | startswith("--hostname=")) then .host = $t[.i][11:] | .i += 1 | skip($t)
+    else . end;
+  # First index after $from holding $word with only flags (and flag values) in between.
+  def loose($t; $from; $word):
+    if $from == null then null else
+      [ range($from + 1; $t | length) | select($t[.] == $word) | . as $k
+        | select(all(range($from + 1; $k); ($t[.] | isflag) or ($t[. - 1] | isflag))) ][0] end;
+  def override($t; $gi):
+    $t[0:$gi] as $p
+    | if all($p[]; . == "env" or test("^[A-Za-z_][A-Za-z0-9_]*=")) then
+        ([ $p[] | select(startswith("COORD_READY_OVERRIDE=")) | .[21:] | select(length > 0) ] | last)
+      else null end;
+  $cmd | gsub("\\\\\n"; " ")
+  | [ scan("(?:\"(?:[^\"\\\\]|\\\\.)*\"|\u0027[^\u0027]*\u0027|\\\\.|[^\\s;&|])+|&&|\\|\\||[;&|\n]") ]
+  | reduce .[] as $w ([[]]; if ($w | isop) then . + [[]] else .[-1] += [$w] end)
+  | .[] | select(length > 0)
+  | . as $raw | map(unq) as $t | ($raw | join(" ")) as $seg
+  | [ range(0; $t | length) | select($t[.] | test("(^|/)gh$")) ] as $ghs
+  | ([ $ghs[] as $gi | ({i: ($gi + 1), repo: null, host: null} | skip($t)) as $g
+       | select($t[$g.i] == "pr") | ($g | .i += 1 | skip($t)) as $p
+       | select($t[$p.i] == "merge")
+       | {gi: $gi, a: $t[$p.i + 1:], repo: ($p.repo // $g.repo), host: ($p.host // $g.host)} ][0]) as $m
+  | if $m != null then
+      $m.a as $a
       | if ($a | index("--disable-auto")) != null then empty else
-          (reduce range(0; $a | length) as $i ({skip: false, repo: null, sel: null};
+          (reduce range(0; $a | length) as $i ({skip: false, repo: $m.repo, sel: null};
              if .skip then .skip = false
              elif $a[$i] == "-R" or $a[$i] == "--repo" then .repo = $a[$i + 1] | .skip = true
              elif ($a[$i] | startswith("--repo=")) then .repo = $a[$i][7:]
              elif ($a[$i] | test("^-(b|t|F|-body|-subject|-body-file|-match-head-commit|-author-email)$")) then .skip = true
              elif ($a[$i] | startswith("-") | not) and .sel == null then .sel = $a[$i]
              else . end))
-          | {selector: .sel, repo: .repo, auto: (($a | index("--auto")) != null)} | @json
+          | (if .repo != null and $m.host != null and (.repo | split("/") | length) == 2 then "\($m.host)/\(.repo)"
+             else .repo end) as $repo
+          | {selector: .sel, repo: $repo, auto: (($a | index("--auto")) != null), override: override($t; $m.gi)} | @json
         end
-    elif ([ range(0; $t | length) | select(($t[.] | test("(^|/)gh$")) and $t[. + 1] == "api") ] | length) > 0
+    elif ([ $ghs[] | select($t[. + 1] == "api") ] | length) > 0
          and ($seg | test("repos/[^/\\s\"\u0027]+/[^/\\s\"\u0027]+/pulls/[0-9]+/merge\\b")) then
       ($seg | capture("repos/(?<o>[^/\\s\"\u0027]+)/(?<r>[^/\\s\"\u0027]+)/pulls/(?<n>[0-9]+)/merge")) as $m
       | (([ $seg | capture("--hostname[ =](?<h>[^\\s\"\u0027]+)") | .h ][0]) // $host) as $h
-      | {selector: "https://\($h)/\($m.o)/\($m.r)/pull/\($m.n)", repo: null, auto: false} | @json
-    else empty end' 2>/dev/null) || targets=""
+      | {selector: "https://\($h)/\($m.o)/\($m.r)/pull/\($m.n)", repo: null, auto: false,
+         override: override($t; [ $ghs[] | select($t[. + 1] == "api") ][0])} | @json
+    else
+      [ $ghs[] as $gi | loose($t; $gi; "pr") as $pj | loose($t; $pj; "merge") as $mk
+        | select($mk != null and (($t[$mk + 1:] | index("--disable-auto")) == null)) | $gi ][0] as $gi
+      | if $gi == null then empty else {unparsed: true, override: override($t; $gi)} | @json end
+    end' 2>/dev/null) || targets=""
 if [ -z "$targets" ]; then
-  # Parse failure on a command that mentions a merge must not slip through.
-  if grep -qE 'gh[[:space:]]+pr[[:space:]]+merge|pulls/[0-9]+/merge' <<<"$command" && ! grep -q -- '--disable-auto' <<<"$command"; then
-    echo "[merge gate] Could not parse which PR this command merges; pass the PR URL explicitly." >&2; exit 2
+  # Fail closed on a merge the parser did not find: gh, flags, pr, flags, merge anywhere in the text (for example
+  # inside `bash -c "..."`), or a REST merge path. A plain mention such as `gh pr list --search merge` does not match.
+  fl='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+  if grep -qE "(^|[^[:alnum:]_.-])gh${fl}[[:space:]]+pr${fl}[[:space:]]+merge([^[:alnum:]_-]|\$)|pulls/[0-9]+/merge" <<<"$command" \
+     && ! grep -q -- '--disable-auto' <<<"$command"; then
+    echo "[merge gate] Could not parse which PR this command merges; use \`gh pr merge <PR URL>\` without extra gh flags." >&2; exit 2
   fi
   exit 0
 fi
 
-if [[ "$command" =~ COORD_READY_OVERRIDE=(\"([^\"]+)\"|\'([^\']+)\'|([^[:space:]]+)) ]]; then
-  reason="${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+log_override() {
+  local root
   root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
   mkdir -p "$root/.coordinator" 2>/dev/null && { [ -f "$root/.coordinator/.gitignore" ] || printf '*\n' > "$root/.coordinator/.gitignore"; }
-  printf '%s\toverride\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reason" "$(tr '\n' ' ' <<<"$command" | head -c 300)" \
+  printf '%s\toverride\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$(tr '\n' ' ' <<<"$command" | head -c 300)" \
     >> "$root/.coordinator/overrides.log" 2>/dev/null \
     || echo "[merge gate] warning: could not write $root/.coordinator/overrides.log" >&2
-  echo "[merge gate] override accepted: $reason (logged; include it in the next report)" >&2
-  exit 0
-fi
+  echo "[merge gate] override accepted: $1 (logged; include it in the next report)" >&2
+}
 
 fails=""
 while IFS= read -r t; do
   [ -n "$t" ] || continue
+  reason=$(jq -r '.override // empty' <<<"$t")
+  if [ -n "$reason" ]; then log_override "$reason"; continue; fi
+  if [ "$(jq -r '.unparsed // false' <<<"$t")" = "true" ]; then
+    fails+="could not parse which PR \"$(head -c 120 <<<"$command")\" merges; use \`gh pr merge <PR URL>\` without extra gh flags"$'\n'
+    continue
+  fi
   sel=$(jq -r '.selector // empty' <<<"$t"); repo=$(jq -r '.repo // empty' <<<"$t"); auto=$(jq -r '.auto' <<<"$t")
   if [[ "$sel" =~ ^https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+ ]] || [[ "$sel" =~ ^([^/[:space:]]+/)?[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]]; then
     url="$sel"
