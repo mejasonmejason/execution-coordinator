@@ -72,7 +72,7 @@ fixtures() {
   echo '[{"filename":"src/a.ts","status":"modified"},{"filename":"tests/x.test.ts","status":"removed"},
     {"filename":".github/workflows/ci.yml","status":"modified"},{"filename":"docs/readme.md","status":"added"}]' > "$STUB_DIR/files.json"
   echo '{"status":"ahead"}' > "$STUB_DIR/compare.json"
-  echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"url":"x","reviewThreads":{"nodes":[]},
+  echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"url":"x","headRefOid":"'"$H"'","reviewThreads":{"nodes":[]},
     "comments":{"nodes":[]},"reviews":{"nodes":[]}}}}}' > "$STUB_DIR/graphql.json"
 }
 setj() { local f="$STUB_DIR/$1" tmp; tmp=$(mktemp); jq "$2" "$f" > "$tmp" && mv "$tmp" "$f"; }
@@ -293,7 +293,7 @@ This comment shows the latest Codex review activity on this pull request.
 
 | Review | Status | Commit | Review trigger |
 | --- | --- | --- | --- |
-| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:42:18.472750Z">2026-10-07T17:42:18.472750Z</relative-time> | `b199446` | New commits |
+| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:42:18.472750Z">2026-10-07T17:42:18.472750Z</relative-time> | `abc1234` | New commits |
 
 
 
@@ -311,7 +311,7 @@ Codex reacts with 👀 while any review is running, comments if it has suggestio
 BODY
 )
 CR=${CS/✅ \*\*Completed\*\*/🔄 **Running** since}
-ROW2=$'\n| 🔒 **Security Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:50:00Z">2026-10-07T17:50:00Z</relative-time> | `b199446` | Comment |'
+ROW2=$'\n| 🔒 **Security Review** | ✅ **Completed** <relative-time datetime="2026-10-07T17:50:00Z">2026-10-07T17:50:00Z</relative-time> | `abc1234` | Comment |'
 C2=${CS/New commits |/New commits |$ROW2}
 t "$(inj "$CS")" 0 "summary: a Codex review summary with every row Completed is INFO"
 out=$("$pt" "$U"); has "$out" "INFO      notice by chatgpt-codex-connector: n1" "summary: the Completed summary is reported INFO"
@@ -333,6 +333,20 @@ has "$out" "ACTION    PR comment by chatgpt-codex-connector: n1" "summary: the e
 fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS") + $AG"
 "$pt" "$U" >/dev/null; t $? 0 "summary: a Completed summary before an agent reply is INFO"
 t "$(inj "${CS/📝 \*\*Code Review\*\*/📝 **Auth token leaks in login**}")" 1 "summary: an unknown review name is ACTION"
+# A Completed row must name the current head (Codex review on #37)
+t "$(inj "${CS/\`abc1234\`/\`b199446\`}")" 1 "summary: a Completed row for an older commit is ACTION"
+t "$(inj "${C2/\`abc1234\` | Comment/\`b199446\` | Comment}")" 1 "summary: one row for an older commit among current rows is ACTION"
+fixtures; setj graphql.json "del(.data.repository.pullRequest.headRefOid) | .data.repository.pullRequest.comments.nodes = $(cm 'chatgpt-codex-connector' "$CS")"
+"$pt" "$U" >/dev/null; t $? 1 "summary: with no head SHA a Completed summary is ACTION"
+# Only the Codex login gets the edited-status exception; a quote of the marker by anyone else follows the time rule
+fixtures; setj graphql.json ".data.repository.pullRequest.comments.nodes = $(cm 'alex' "quoting <!-- codex-pull-request-review-summary --> here") + $AG"
+"$pt" "$U" >/dev/null; t $? 0 "summary: another login quoting the marker before an agent reply is cleared"
+# REST fallback reads the head from the pulls endpoint
+fixtures; restfx; echo '[]' > "$STUB_DIR/threads.json"
+jq -n --arg b "$CS" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n9",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 0 "summary: REST fallback Completed summary for the head is INFO"
+jq -n --arg b "${CS/\`abc1234\`/\`b199446\`}" '[{user:{login:"chatgpt-codex-connector[bot]"},body:$b,html_url:"n9",created_at:"2026-01-01T00:00:00Z"}]' > "$STUB_DIR/icomments.json"
+out=$(STUB_NO_GRAPHQL=1 "$pt" "$U"); t $? 1 "summary: REST fallback Completed summary for an older commit is ACTION"
 # an empty, whitespace-only or pullRequest-less response is unreadable (exit 3), never OK, never READY
 for body in '' '   
   ' '{"data":{"repository":{"pullRequest":null}}}' '{"data":{"viewer":{"login":"me"}}}' '{}'; do

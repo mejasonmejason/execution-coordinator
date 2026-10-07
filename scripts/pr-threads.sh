@@ -23,7 +23,8 @@
 # free-text class), so prose added to a sentence, or placed inside a link text or URL, makes the body ACTION. The 2nd and 3rd
 # sentences are optional (see DEFAULT_NOTICES).
 # (2) The "Codex Review Summary" status comment (#36). Codex posts it on every PR and edits it in place. It
-# is INFO only when every table row reads "✅ **Completed**". A row that reads Running, or any shape the
+# is INFO only when every table row reads "✅ **Completed**" for the current PR head. A row that reads Running, a row
+# for an older commit, or any shape the
 # pattern does not know, keeps the comment ACTION, so READY waits while a review runs. Codex findings arrive
 # as separate review threads and stay ACTION. The table pipes are written "\x7C" because "|" splits pairs.
 # A pair with no colon, an empty login, an empty regex, or a regex jq rejects is a broken config: the script
@@ -72,7 +73,7 @@ if [ -n "$NOTICES" ]; then
 fi
 
 query='query($o:String!,$r:String!,$n:Int!){ viewer{login}
-  repository(owner:$o,name:$r){ pullRequest(number:$n){ url
+  repository(owner:$o,name:$r){ pullRequest(number:$n){ url headRefOid
     reviewThreads(first:100){ nodes{ isResolved isOutdated
       comments(first:100){ nodes{ author{login} body url createdAt } } } }
     comments(last:50){ nodes{ author{login} body url createdAt } }
@@ -83,18 +84,19 @@ query='query($o:String!,$r:String!,$n:Int!){ viewer{login}
 # below stays the same. Thread resolution comes from the CCR route .../pulls/N/ccr/review_threads.
 # Set COORD_THREADS_REST=1 to force it.
 rest_json() {  # host owner repo num
-  local h=$1 o=$2 r=$3 n=$4 me threads rc ic rv
+  local h=$1 o=$2 r=$3 n=$4 me head threads rc ic rv
   me=$(gh api --hostname "$h" user --jq .login) || return 1
   [ -n "$me" ] || { echo "empty user response" >&2; return 1; }
+  head=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n" --jq '.head.sha // ""') || return 1
   threads=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n/ccr/review_threads") || return 1
   rc=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
   ic=$(gh api --hostname "$h" --paginate "repos/$o/$r/issues/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
   rv=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/reviews?per_page=100" --jq '.[]' | jq -s '.') || return 1
-  jq -n --arg me "$me" --argjson t "$threads" --argjson rc "$rc" --argjson ic "$ic" --argjson rv "$rv" '
+  jq -n --arg me "$me" --arg head "$head" --argjson t "$threads" --argjson rc "$rc" --argjson ic "$ic" --argjson rv "$rv" '
     def node: {author:{login:(.user.login // "ghost")}, body:(.body // ""), url:.html_url, createdAt:.created_at};
     ($rc | map({key:(.id|tostring), value:node}) | from_entries) as $byid
     | ($rc | group_by(.pull_request_review_id) | map({key:(.[0].pull_request_review_id|tostring), value:length}) | from_entries) as $per
-    | {data:{viewer:{login:$me}, repository:{pullRequest:{
+    | {data:{viewer:{login:$me}, repository:{pullRequest:{ headRefOid:$head,
         reviewThreads:{nodes:[ $t[] | {isResolved:.resolved, isOutdated:.outdated,
           comments:{nodes:[ .comment_ids[] | tostring | $byid[.] | select(. != null) ]}} ]},
         comments:{nodes:[ $ic[] | node ]},
@@ -124,9 +126,17 @@ for url in "$@"; do
     def ignored: ((.author.login // "ghost") as $l | ($ign | split(",")) | index($l)) != null;
     def unbot: sub("\\[bot\\]$"; "");
     # login:regex pairs split at the FIRST colon; the login is a plain string, never a regex
-    # A status comment that its bot edits in place keeps its first createdAt, so the time filter would hide
-    # a later edit (a review that starts after an agent reply). It stays ACTION until it reads as a notice.
-    def status_comment: (.body // "") | contains("<!-- codex-pull-request-review-summary -->");
+    # The Codex summary is a status comment that Codex edits in place. It keeps its first createdAt, so the
+    # time filter would hide a later edit (a review that starts after an agent reply). It stays ACTION until
+    # it reads as a notice. Only the Codex login counts, so a quote of the marker by anyone else is ordinary.
+    def status_comment: ((.author.login // "") | unbot) == "chatgpt-codex-connector"
+      and ((.body // "") | contains("<!-- codex-pull-request-review-summary -->"));
+    # A Completed summary is a notice only when every row names the current PR head. A row for an older
+    # commit means Codex has not reviewed the head yet. With no head SHA, the summary is never a notice.
+    def fresh($h): if status_comment | not then true
+      else ([(.body // "") | scan("\\x7C `([0-9a-f]{7,40})` \\x7C") | .[0]] as $s
+        | ($h | type) == "string" and $h != "" and ($s | length) > 0 and all($s[]; . as $x | $h | startswith($x)))
+      end;
     def notice: (.author.login // "ghost") as $l | (.body // "") as $b
       | any($nt | split("|")[] | select(index(":") != null);
           (index(":") as $i | .[:$i]) as $pl | (index(":") as $i | .[$i+1:]) as $re
@@ -134,19 +144,20 @@ for url in "$@"; do
             and ($b | test("\\A\\s*(?:" + $re + ")\\s*\\z"; "i")));
     ((.data.viewer.login | select(type == "string" and . != "")) // error("response has no viewer login")) as $me
     | (.data.repository.pullRequest // error("response has no pullRequest")) as $pr
+    | ($pr.headRefOid // "") as $head
     # last agent comment time anywhere on the PR, for PR-level comments and review summaries
     | ([$pr.comments.nodes[], ($pr.reviewThreads.nodes[].comments.nodes[]) | select(agent) | .createdAt] | max // "") as $lastAgent
     | ( $pr.reviewThreads.nodes[] | select(.isResolved | not)
         | [.comments.nodes[] | select(ignored | not)] as $c | select($c | length > 0)
         | if ($c[-1] | agent) then "AWAITING  \($c[0].author.login): \($c[0].url)"
           else "ACTION    thread by \($c[0].author.login)\(if .isOutdated then " (outdated)" else "" end), last \($c[-1].author.login): \($c[-1].url)" end ),
-      ( $pr.comments.nodes[] | select(notice and (ignored | not))
+      ( $pr.comments.nodes[] | select(notice and fresh($head) and (ignored | not))
         | "INFO      notice by \(.author.login): \(.url)" ),
-      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and notice and (ignored | not))
+      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and notice and fresh($head) and (ignored | not))
         | "INFO      notice by \(.author.login): \(.url)" ),
-      ( $pr.comments.nodes[] | select((agent | not) and (notice | not) and (ignored | not) and (.createdAt > $lastAgent or status_comment))
+      ( $pr.comments.nodes[] | select((agent | not) and ((notice and fresh($head)) | not) and (ignored | not) and (.createdAt > $lastAgent or status_comment))
         | "ACTION    PR comment by \(.author.login): \(.url)" ),
-      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and (agent | not) and (notice | not) and (ignored | not) and (.submittedAt // "") > $lastAgent)
+      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and (agent | not) and ((notice and fresh($head)) | not) and (ignored | not) and (.submittedAt // "") > $lastAgent)
         | "ACTION    review summary (\(.state)) by \(.author.login): \(.url)" ),
       ( $pr.reviews.nodes[] | select(.state == "PENDING" and .author.login == $me and .comments.totalCount > 0)
         | "UNSENT    \(.comments.totalCount) draft comment(s) in your pending review: submit it (gh pr review / GitHub UI) or delete it" )
