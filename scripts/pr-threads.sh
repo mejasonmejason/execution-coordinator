@@ -19,15 +19,23 @@
 # first character to its last. A body that holds the notice text plus any other text (a real finding in the
 # same review summary) is NOT a notice and stays ACTION. "." does not match a newline, so write "\s" or
 # "(?s:.)" where a pattern must span lines. End a pattern with ".*" to accept trailing text.
-# Default: the Codex quota message. It is made only of the literal Codex sentences, link texts and URLs (no
+# Default: two Codex notices. (1) The quota message. It is made only of the literal Codex sentences, link texts and URLs (no
 # free-text class), so prose added to a sentence, or placed inside a link text or URL, makes the body ACTION. The 2nd and 3rd
 # sentences are optional (see DEFAULT_NOTICES).
+# (2) The "Codex Review Summary" status comment (#36). Codex posts it on every PR and edits it in place. It
+# is INFO only when every table row reads "✅ **Completed**" for the current PR head. A row that reads Running, a row
+# for an older commit, or any shape the
+# pattern does not know, keeps the comment ACTION, so READY waits while a review runs. Codex findings arrive
+# as separate review threads and stay ACTION. The table pipes are written "\x7C" because "|" splits pairs.
 # A pair with no colon, an empty login, an empty regex, or a regex jq rejects is a broken config: the script
 # prints an ERROR line on stderr and exits 3 before it reads any PR, so READY cannot pass on it.
-# A pair whose login is "*" is also a broken config when its whole-body regex matches any probe body ("x",
-# "P1: real bug in auth", or a two-line "a\nb"): ".*", ".+" and "(?s:.*)" would turn every comment from every
-# author into INFO and switch the audit off. A "*" pair that matches only notice-like text is allowed.
-# An empty or whitespace-only response, or one with no pullRequest, is unreadable: exit 3, never OK.
+# A pair whose login is "*" (wildcard) is a broken config by default: a broad regex would turn comments from
+# every author into INFO and switch the audit off. Set COORD_NOTICE_ALLOW_WILDCARD=1 to allow it. When allowed,
+# a "*" pair is still a broken config if its whole-body regex matches any probe body ("x",
+# "P1: real bug in auth", or a two-line "a\nb"). The probes catch ".*", ".+" and "(?s:.*)", but not every
+# broad regex (for example "(?s:.*)\d"), so the opt-in is the real guard.
+# An empty or whitespace-only response, or one with no pullRequest or no viewer login, is unreadable: exit 3,
+# never OK. Without the viewer login the script cannot find your own pending review (UNSENT).
 # Exit: 0 nothing actionable, 1 ACTION or UNSENT present, 3 a PR or the config could not be read, or jq failed.
 set -uo pipefail
 
@@ -37,17 +45,21 @@ IGNORE="${IGNORE_LOGINS:-codecov,dependabot,renovate,github-actions-notices}"
 # in the [Codex usage dashboard](url).\nTo continue using code reviews, you can upgrade your account or add
 # credits to your account and enable them for code reviews in your [settings](url)."
 DEFAULT_NOTICES='chatgpt-codex-connector[bot]:You have reached your Codex usage limits for code reviews\.(\s+You can see your limits in the \[Codex usage dashboard\]\(https://chatgpt\.com/codex/cloud/settings/usage\)\.)?(\s+To continue using code reviews, you can upgrade your account or add credits to your account and enable them for code reviews in your \[settings\]\(https://chatgpt\.com/codex/cloud/settings/code-review\)\.)?'
+DEFAULT_NOTICES+='|chatgpt-codex-connector[bot]:<!-- codex-pull-request-review-summary -->\s+## Codex Review Summary\s+This comment shows the latest Codex review activity on this pull request\.\s+\x7C Review \x7C Status \x7C Commit \x7C Review trigger \x7C\s+\x7C --- \x7C --- \x7C --- \x7C --- \x7C(?:\s+\x7C \S{1,2} \*\*(?:Code)?(?:Security)? Review\*\* \x7C ✅ \*\*Completed\*\* <relative-time datetime="[0-9TZ:.+-]{1,40}">[0-9TZ:.+-]{1,40}</relative-time> \x7C `[0-9a-f]{7,40}` \x7C [A-Za-z@" ]{1,40} \x7C){1,10}\s+<details> <summary>ℹ️ About Codex in GitHub</summary>\s+<br/>\s+\[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you\s+- Open a pull request for review\s+- Mark a draft as ready\s+- Comment "@codex review" or "@codex security review"\.\s+Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings\.\s+</details>'
 NOTICES="${COORD_NOTICE_PATTERNS-$DEFAULT_NOTICES}"
+ALLOW_WILDCARD="${COORD_NOTICE_ALLOW_WILDCARD:-0}"
 status=0
 
 # Validate the notice config up front. A bad pair makes every later verdict untrustworthy, so exit 3 now.
 # The bare regex is tested too: the anchor wrapper alone would accept an unbalanced "b)(".
 if [ -n "$NOTICES" ]; then
-  if ! bad=$(jq -rn --arg nt "$NOTICES" '
+  if ! bad=$(jq -rn --arg nt "$NOTICES" --arg aw "$ALLOW_WILDCARD" '
       $nt | split("|")[] | . as $p | index(":") as $i
       | if $i == null then "pair has no login:regex colon: \($p | tojson)"
         elif ($p[:$i] | test("^\\s*$")) then "pair has an empty login: \($p | tojson)"
         elif ($p[$i+1:] | test("^\\s*$")) then "pair has an empty regex: \($p | tojson)"
+        elif $p[:$i] == "*" and $aw != "1"
+        then "wildcard login is off by default; set COORD_NOTICE_ALLOW_WILDCARD=1 to allow it: \($p | tojson)"
         else try (("" | test($p[$i+1:]; "i") | empty), ("" | test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i") | empty),
                (if $p[:$i] == "*" and (["x", "P1: real bug in auth", "a\nb"]
                     | any(.[]; test("\\A\\s*(?:" + $p[$i+1:] + ")\\s*\\z"; "i")))
@@ -61,7 +73,7 @@ if [ -n "$NOTICES" ]; then
 fi
 
 query='query($o:String!,$r:String!,$n:Int!){ viewer{login}
-  repository(owner:$o,name:$r){ pullRequest(number:$n){ url
+  repository(owner:$o,name:$r){ pullRequest(number:$n){ url headRefOid
     reviewThreads(first:100){ nodes{ isResolved isOutdated
       comments(first:100){ nodes{ author{login} body url createdAt } } } }
     comments(last:50){ nodes{ author{login} body url createdAt } }
@@ -72,18 +84,19 @@ query='query($o:String!,$r:String!,$n:Int!){ viewer{login}
 # below stays the same. Thread resolution comes from the CCR route .../pulls/N/ccr/review_threads.
 # Set COORD_THREADS_REST=1 to force it.
 rest_json() {  # host owner repo num
-  local h=$1 o=$2 r=$3 n=$4 me threads rc ic rv
+  local h=$1 o=$2 r=$3 n=$4 me head threads rc ic rv
   me=$(gh api --hostname "$h" user --jq .login) || return 1
   [ -n "$me" ] || { echo "empty user response" >&2; return 1; }
+  head=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n" --jq '.head.sha // ""') || return 1
   threads=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n/ccr/review_threads") || return 1
   rc=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
   ic=$(gh api --hostname "$h" --paginate "repos/$o/$r/issues/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
   rv=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/reviews?per_page=100" --jq '.[]' | jq -s '.') || return 1
-  jq -n --arg me "$me" --argjson t "$threads" --argjson rc "$rc" --argjson ic "$ic" --argjson rv "$rv" '
+  jq -n --arg me "$me" --arg head "$head" --argjson t "$threads" --argjson rc "$rc" --argjson ic "$ic" --argjson rv "$rv" '
     def node: {author:{login:(.user.login // "ghost")}, body:(.body // ""), url:.html_url, createdAt:.created_at};
     ($rc | map({key:(.id|tostring), value:node}) | from_entries) as $byid
     | ($rc | group_by(.pull_request_review_id) | map({key:(.[0].pull_request_review_id|tostring), value:length}) | from_entries) as $per
-    | {data:{viewer:{login:$me}, repository:{pullRequest:{
+    | {data:{viewer:{login:$me}, repository:{pullRequest:{ headRefOid:$head,
         reviewThreads:{nodes:[ $t[] | {isResolved:.resolved, isOutdated:.outdated,
           comments:{nodes:[ .comment_ids[] | tostring | $byid[.] | select(. != null) ]}} ]},
         comments:{nodes:[ $ic[] | node ]},
@@ -113,26 +126,38 @@ for url in "$@"; do
     def ignored: ((.author.login // "ghost") as $l | ($ign | split(",")) | index($l)) != null;
     def unbot: sub("\\[bot\\]$"; "");
     # login:regex pairs split at the FIRST colon; the login is a plain string, never a regex
+    # The Codex summary is a status comment that Codex edits in place. It keeps its first createdAt, so the
+    # time filter would hide a later edit (a review that starts after an agent reply). It stays ACTION until
+    # it reads as a notice. Only the Codex login counts, so a quote of the marker by anyone else is ordinary.
+    def status_comment: ((.author.login // "") | unbot) == "chatgpt-codex-connector"
+      and ((.body // "") | contains("<!-- codex-pull-request-review-summary -->"));
+    # A Completed summary is a notice only when every row names the current PR head. A row for an older
+    # commit means Codex has not reviewed the head yet. With no head SHA, the summary is never a notice.
+    def fresh($h): if status_comment | not then true
+      else ([(.body // "") | scan("\\x7C `([0-9a-f]{7,40})` \\x7C") | .[0]] as $s
+        | ($h | type) == "string" and $h != "" and ($s | length) > 0 and all($s[]; . as $x | $h | startswith($x)))
+      end;
     def notice: (.author.login // "ghost") as $l | (.body // "") as $b
       | any($nt | split("|")[] | select(index(":") != null);
           (index(":") as $i | .[:$i]) as $pl | (index(":") as $i | .[$i+1:]) as $re
           | ($pl == "*" or ($pl | unbot) == ($l | unbot)) and ($re != "")
             and ($b | test("\\A\\s*(?:" + $re + ")\\s*\\z"; "i")));
-    .data.viewer.login as $me
+    ((.data.viewer.login | select(type == "string" and . != "")) // error("response has no viewer login")) as $me
     | (.data.repository.pullRequest // error("response has no pullRequest")) as $pr
+    | ($pr.headRefOid // "") as $head
     # last agent comment time anywhere on the PR, for PR-level comments and review summaries
     | ([$pr.comments.nodes[], ($pr.reviewThreads.nodes[].comments.nodes[]) | select(agent) | .createdAt] | max // "") as $lastAgent
     | ( $pr.reviewThreads.nodes[] | select(.isResolved | not)
         | [.comments.nodes[] | select(ignored | not)] as $c | select($c | length > 0)
         | if ($c[-1] | agent) then "AWAITING  \($c[0].author.login): \($c[0].url)"
           else "ACTION    thread by \($c[0].author.login)\(if .isOutdated then " (outdated)" else "" end), last \($c[-1].author.login): \($c[-1].url)" end ),
-      ( $pr.comments.nodes[] | select(notice and (ignored | not))
+      ( $pr.comments.nodes[] | select(notice and fresh($head) and (ignored | not))
         | "INFO      notice by \(.author.login): \(.url)" ),
-      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and notice and (ignored | not))
+      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and notice and fresh($head) and (ignored | not))
         | "INFO      notice by \(.author.login): \(.url)" ),
-      ( $pr.comments.nodes[] | select((agent | not) and (notice | not) and (ignored | not) and .createdAt > $lastAgent)
+      ( $pr.comments.nodes[] | select((agent | not) and ((notice and fresh($head)) | not) and (ignored | not) and (.createdAt > $lastAgent or status_comment))
         | "ACTION    PR comment by \(.author.login): \(.url)" ),
-      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and (agent | not) and (notice | not) and (ignored | not) and (.submittedAt // "") > $lastAgent)
+      ( $pr.reviews.nodes[] | select(.state != "PENDING" and (.body // "") != "" and (agent | not) and ((notice and fresh($head)) | not) and (ignored | not) and (.submittedAt // "") > $lastAgent)
         | "ACTION    review summary (\(.state)) by \(.author.login): \(.url)" ),
       ( $pr.reviews.nodes[] | select(.state == "PENDING" and .author.login == $me and .comments.totalCount > 0)
         | "UNSENT    \(.comments.totalCount) draft comment(s) in your pending review: submit it (gh pr review / GitHub UI) or delete it" )

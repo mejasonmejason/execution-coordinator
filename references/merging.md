@@ -12,7 +12,7 @@ You must read this before you run `scripts/ready.sh` or the merge gate, chase re
 - Merge order
 - Merge-queue failures
 - Post-merge and queue checks
-- Remote writes
+- Remote reads and writes
 
 ## Repository reflex (L0)
 
@@ -80,8 +80,9 @@ When batch checks fail, isolate the culprit by queue bisection or subset runs. R
 - If the runtime shows a wrong value or target, find the cause (target, cache or reload) before you redeploy or restart, because a blind restart can hide it.
 - After every mutating remote command, verify its target, even when the command failed, because a failed command can still have partly applied.
 
-## Remote writes
+## Remote reads and writes
 
 - Make writes idempotent: use stable IDs and check before you write, because a retried write must not apply twice.
 - Before a cross-system change that can partly commit, record the repair steps.
+- Retry a read only on 429, 5xx, a network error or the secondary-rate-limit 403. Honor `retry-after`, because it tells you when a retry can succeed. Other 4xx errors will not change on retry.
 - Read back every configuration or launch change (job or session name, model, advisor, hook), because a field can drop silently.
