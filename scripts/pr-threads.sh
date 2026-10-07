@@ -84,15 +84,18 @@ query='query($o:String!,$r:String!,$n:Int!){ viewer{login}
 # below stays the same. Thread resolution comes from the CCR route .../pulls/N/ccr/review_threads.
 # Set COORD_THREADS_REST=1 to force it.
 rest_json() {  # host owner repo num
-  local h=$1 o=$2 r=$3 n=$4 me head threads rc ic rv
+  local h=$1 o=$2 r=$3 n=$4 me head d out
   me=$(gh api --hostname "$h" user --jq .login) || return 1
   [ -n "$me" ] || { echo "empty user response" >&2; return 1; }
   head=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n" --jq '.head.sha // ""') || return 1
-  threads=$(gh api --hostname "$h" "repos/$o/$r/pulls/$n/ccr/review_threads") || return 1
-  rc=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
-  ic=$(gh api --hostname "$h" --paginate "repos/$o/$r/issues/$n/comments?per_page=100" --jq '.[]' | jq -s '.') || return 1
-  rv=$(gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/reviews?per_page=100" --jq '.[]' | jq -s '.') || return 1
-  jq -n --arg me "$me" --arg head "$head" --argjson t "$threads" --argjson rc "$rc" --argjson ic "$ic" --argjson rv "$rv" '
+  # The JSON goes through files, not arguments: a busy PR's comments exceed the argument size limit (ARG_MAX).
+  d=$(mktemp -d) || return 1
+  if gh api --hostname "$h" "repos/$o/$r/pulls/$n/ccr/review_threads" > "$d/t" \
+    && gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/comments?per_page=100" --jq '.[]' | jq -s '.' > "$d/rc" \
+    && gh api --hostname "$h" --paginate "repos/$o/$r/issues/$n/comments?per_page=100" --jq '.[]' | jq -s '.' > "$d/ic" \
+    && gh api --hostname "$h" --paginate "repos/$o/$r/pulls/$n/reviews?per_page=100" --jq '.[]' | jq -s '.' > "$d/rv"; then
+    out=$(jq -n --arg me "$me" --arg head "$head" --slurpfile t "$d/t" --slurpfile rc "$d/rc" --slurpfile ic "$d/ic" --slurpfile rv "$d/rv" '
+    ($t[0]) as $t | ($rc[0]) as $rc | ($ic[0]) as $ic | ($rv[0]) as $rv |
     def node: {author:{login:(.user.login // "ghost")}, body:(.body // ""), url:.html_url, createdAt:.created_at};
     ($rc | map({key:(.id|tostring), value:node}) | from_entries) as $byid
     | ($rc | group_by(.pull_request_review_id) | map({key:(.[0].pull_request_review_id|tostring), value:length}) | from_entries) as $per
@@ -101,7 +104,11 @@ rest_json() {  # host owner repo num
           comments:{nodes:[ .comment_ids[] | tostring | $byid[.] | select(. != null) ]}} ]},
         comments:{nodes:[ $ic[] | node ]},
         reviews:{nodes:[ $rv[] | {state, author:{login:(.user.login // "ghost")}, body:(.body // ""),
-          url:.html_url, submittedAt:(.submitted_at // ""), comments:{totalCount:($per[(.id|tostring)] // 0)}} ]} }}}}'
+          url:.html_url, submittedAt:(.submitted_at // ""), comments:{totalCount:($per[(.id|tostring)] // 0)}} ]} }}}}') || { rm -rf "$d"; return 1; }
+    rm -rf "$d"; printf '%s\n' "$out"
+  else
+    rm -rf "$d"; return 1
+  fi
 }
 
 for url in "$@"; do
