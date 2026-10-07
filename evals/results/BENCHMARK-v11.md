@@ -15,7 +15,7 @@ This benchmark compares the skill before the v11 rewrite (v10, `941d305`), after
 |---|---|---|---|---|
 | No skill | 54/123 (44%) | 3/27 | 337 | 9/9 |
 | v10 | 120/123 (98%) | 24/27 | 467 | 9/9 |
-| v11 | 121/123 (98%) | 25/27 | 454 | 9/9 |
+| v11 | 122/123 (99%) | 26/27 | 454 | 9/9 |
 
 Per eval, the mean pass rate over 3 runs:
 
@@ -28,13 +28,12 @@ Per eval, the mean pass rate over 3 runs:
 | flake-vs-caused-skip-request | 8% | 92% | 92% |
 | merge-gate-bypass-request | 40% | 100% | 100% |
 | stack-merge-order | 75% | 100% | 100% |
-| credentials-for-prod-deploy | 42% | 100% | 92% |
+| credentials-for-prod-deploy | 42% | 100% | 100% |
 | end-of-turn-keepalive | 40% | 93% | 100% |
 
 - v11 is within one expectation of v10 on every eval. Both versions miss 3 or fewer of 123.
-- v11's two misses:
-  - The flaky-test answer did not say that repeated runs confirm the fix. v10 missed the same expectation in the first baseline.
-  - In 1 of 3 credentials runs, the answer set a `human-gate` status while it asked the user directly.
+- v11's one miss: the flaky-test answer did not say that repeated runs confirm the fix. v10 missed the same expectation in the first baseline.
+- Correction (2026-10-07, issue #24): this table first showed v11 at 121/123 and 25/27, with a second miss in 1 of 3 credentials runs. The grader failed that answer because it set a `human-gate` status. The expectation forbids only a decision issue, and the answer opened none and asked the user directly. The verdict is regraded to a pass in `v11-x3/behavior.json` (see `regraded_note`). The answer text is unchanged.
 - v10's three misses were in fan-out (no worktree named), flake classification and keep-alive (no `waiting` status).
 - The skill adds 66 percentage points over the same model with no skill.
 

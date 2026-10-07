@@ -24,22 +24,32 @@ Loading modes (--load):
               Read, Glob and Grep tools (--restricted keeps them inside that folder). The model
               decides itself which references to open. Each run records the files it opened.
 
-Needs the `claude` CLI on PATH (Claude Code). No API key or SDK. Python 3.9+, stdlib only.
-A timeout, a CLI error or an unparsable grade counts as a FAIL and is marked as an error.
+Needs the `claude` CLI on PATH (Claude Code). No SDK. Python 3.9+, stdlib only.
+A timeout, a CLI error or an unparsable grade counts as a FAIL and is marked as an error. A grade
+whose "assertion" texts do not match the expectations, in order, is also a grader error.
+
+HOME isolation (default on): `claude -p` runs with an empty temp HOME and without
+CLAUDE_CODE_SYNC_SKILLS, so a user-level CLAUDE.md, settings or installed skill cannot affect the
+results. Auth must then come from the environment (for example ANTHROPIC_API_KEY or
+CLAUDE_CODE_OAUTH_TOKEN). --no-isolate-home keeps the real HOME; behavior.json records
+"home_isolated" and summary.md labels the run.
 """
 from __future__ import annotations
 
 import argparse
+import atexit
 import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -123,11 +133,14 @@ class Claude:
         self.cost_usd = 0.0
         self._lock = threading.Lock()
         self.cwd = tempfile.mkdtemp(prefix="ec-evals-cwd-")
+        atexit.register(shutil.rmtree, self.cwd, True)
+        self.isolate_home = isolate_home
         drop = {"CLAUDECODE", "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "CLAUDE_ADDITIONAL_DIRECTORIES"}
         self.env = {k: v for k, v in os.environ.items() if k not in drop}
         if isolate_home:
             self.env.pop("CLAUDE_CODE_SYNC_SKILLS", None)
             self.env["HOME"] = tempfile.mkdtemp(prefix="ec-evals-home-")
+            atexit.register(shutil.rmtree, self.env["HOME"], True)
 
     def ask(self, prompt: str, model: str | None = None, cwd: str | None = None,
             read_tools: bool = False) -> dict:
@@ -266,22 +279,40 @@ def load_skill(skill_md: Path) -> str:
     return "\n\n".join(parts)
 
 
-def parse_grades(text: str, expectations: list[str]) -> list[dict] | None:
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+                         "\u2013": "-", "\u2014": "-"})
+
+
+def norm_assertion(text: str) -> str:
+    """Compare assertion texts loosely: case, spacing, quote style, a leading "1." and the
+    trailing full stop do not matter. The words do."""
+    t = unicodedata.normalize("NFKC", str(text)).translate(_QUOTES).strip().strip('"').strip()
+    t = re.sub(r"^\d+[.)]\s+", "", t)
+    return " ".join(t.lower().split()).rstrip(".")
+
+
+def parse_grades(text: str, expectations: list[str]) -> tuple[list[dict] | None, str]:
+    """Return (grades, "") or (None, reason). Each returned object must name its expectation:
+    its "assertion" must match the expectation at the same position. A grade for another
+    assertion, or the right ones out of order, is a grader error, never a pass (issue #24)."""
     start, end = text.find("["), text.rfind("]")
     if start < 0 or end <= start:
-        return None
+        return None, "no JSON array"
     try:
         arr = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
-        return None
+        return None, "invalid JSON"
     if not isinstance(arr, list) or len(arr) != len(expectations):
-        return None
+        n = len(arr) if isinstance(arr, list) else "not a list"
+        return None, f"expected {len(expectations)} grades, got {n}"
     out = []
-    for exp, g in zip(expectations, arr):
+    for i, (exp, g) in enumerate(zip(expectations, arr), 1):
         if not isinstance(g, dict) or not isinstance(g.get("pass"), bool):
-            return None
+            return None, f"grade {i} has no boolean pass"
+        if norm_assertion(g.get("assertion", "")) != norm_assertion(exp):
+            return None, f"grade {i} names another assertion: {str(g.get('assertion', ''))[:120]!r}"
         out.append({"text": exp, "passed": g["pass"], "evidence": str(g.get("evidence", "")), "status": "ok"})
-    return out
+    return out, ""
 
 
 def grade(claude: Claude, grader_model: str | None, prompt: str, answer: str,
@@ -289,10 +320,11 @@ def grade(claude: Claude, grader_model: str | None, prompt: str, answer: str,
     listing = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(expectations))
     r = claude.ask(GRADER_TEMPLATE.format(prompt=prompt, answer=answer, expectations=listing,
                                           n=len(expectations)), model=grader_model)
-    grades = parse_grades(r["text"], expectations) if r["status"] == "ok" else None
+    grades, why = parse_grades(r["text"], expectations) if r["status"] == "ok" else (None, "")
     if grades is None:
         status = r["status"] if r["status"] != "ok" else "unparsable"
-        grades = [{"text": e, "passed": False, "evidence": f"GRADER {status}: {r['detail'] or r['text'][:200]}",
+        detail = why or r["detail"] or r["text"][:200]
+        grades = [{"text": e, "passed": False, "evidence": f"GRADER {status}: {detail}",
                    "status": "grader_error"} for e in expectations]
         return {"status": status, "expectations": grades, "raw": r["text"]}
     return {"status": "ok", "expectations": grades, "raw": r["text"]}
@@ -329,8 +361,11 @@ def main() -> int:
     ap.add_argument("--only", default="", help="comma-separated eval names or ids")
     ap.add_argument("--goldens-only", action="store_true", help="grade the goldens only (no answers)")
     ap.add_argument("--no-goldens", action="store_true")
-    ap.add_argument("--isolate-home", action="store_true",
-                    help="run claude with an empty HOME (hides user skills and CLAUDE.md; needs env-based auth)")
+    ap.add_argument("--no-isolate-home", dest="isolate_home", action="store_false",
+                    help="keep the real HOME. Default: an empty HOME, which hides user skills, settings and "
+                         "CLAUDE.md and needs env-based auth. The output records which one ran")
+    ap.add_argument("--isolate-home", dest="isolate_home", action="store_true",
+                    help="the default; kept so older commands still work")
     args = ap.parse_args()
     if args.runs < 1:
         ap.error("--runs must be 1 or more")
@@ -482,6 +517,7 @@ def main() -> int:
         "cost_usd_reported": round(claude.cost_usd, 4),
         "runs_per_eval": args.runs,
         "concurrency": args.concurrency, "timeout_s": args.timeout, "retries": args.retries,
+        "home_isolated": args.isolate_home,
         "summary": {**summarize(all_exps), "evals": len(rows), "runs": len(all_runs),
                     "runs_all_passed": sum(1 for r in all_runs if r["all_passed"]),
                     "errored_expectations": errors,
@@ -496,6 +532,9 @@ def main() -> int:
     (out / "behavior.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     (out / "summary.md").write_text(render_summary(result), encoding="utf-8")
     print(render_summary(result))
+    if errors and args.isolate_home:
+        print("note: HOME was isolated. If the errors are auth errors, set ANTHROPIC_API_KEY or "
+              "CLAUDE_CODE_OAUTH_TOKEN, or pass --no-isolate-home.", file=sys.stderr)
     # Exit 1 when a golden is not caught (toothless assertions) or a call errored.
     return 1 if (goldens and result["summary"]["goldens_caught"] < len(goldens)) or errors else 0
 
@@ -532,6 +571,9 @@ def render_summary(r: dict) -> str:
         f"- Runs per eval: {r['runs_per_eval']}; `claude -p` calls: {r['claude_calls']} "
         f"(reported cost ${r['cost_usd_reported']})",
     ]
+    if "home_isolated" in r:
+        lines.append("- HOME isolated: yes" if r["home_isolated"] else
+                     "- HOME isolated: NO (user-level CLAUDE.md, settings and skills can affect results)")
     skill_only = r.get("load") == "skill-only"
     if r.get("load"):
         lines.append(
