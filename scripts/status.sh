@@ -17,8 +17,9 @@
 # A pr, paths or run_id change clears the verdict. PR forms (URL, owner/repo#N) and path order are normalized
 # first. --branch, --worktree, --base-sha and --note never clear it. On an accepted dispatch the gate does not
 # run again, and pr, paths and run_id changes are refused unless --state moves it out of accepted.
-# Writes hold a lock directory (.coordinator/.lock). A dispatch update that finds the record changed since it
-# read it exits 5 ("dispatch changed; retry"). COORD_LOCK_TRIES sets the lock wait in 0.1s tries (default 100).
+# Writes hold the .coordinator/.lock symlink, whose target names its owner. A dispatch update that finds the record
+# changed since it read it exits 5 ("dispatch changed; retry"). COORD_LOCK_TRIES sets the lock wait in 0.1s tries
+# (default 100; 0 means one try).
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "status.sh: not inside a git repository" >&2; exit 2; }
@@ -46,29 +47,62 @@ session_id() {
   echo "${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}"
 }
 current() { if [ -f "$file" ]; then cat "$file"; else echo '{}'; fi; }
-# Portable lock (mkdir is atomic; no flock on macOS). A lock whose holder pid is dead is cleared.
+# Portable lock (no flock on macOS). `ln -s` makes .lock and its owner ("pid.nonce") in one atomic step. A lock
+# whose owner is dead, or that has no owner and is over a minute old, is cleared by one process at a time (a
+# per-owner .lock.clear.* marker), which re-reads the owner before it removes it. Only the owner unlocks.
+lk_tok="" tmp=""
+lk_owner() { if [ -L "$1" ]; then readlink "$1"; elif [ -d "$1" ]; then echo "dir.$(cat "$1/pid" 2>/dev/null)"; fi; }
+lk_alive() { kill -0 "$1" 2>/dev/null || ps -p "$1" >/dev/null 2>&1; }
+lk_clear() {
+  local m; m="$1.clear.$(printf '%s' "$2" | tr -c 'A-Za-z0-9.' _)"
+  ln -s "$$" "$m" 2>/dev/null || return 1
+  [ "$(lk_owner "$1")" != "$2" ] || rm -rf "$1"
+  rm -f "$m"
+}
 lock() {
-  local i pid
-  for i in $(seq 1 "${COORD_LOCK_TRIES:-100}"); do
-    if mkdir "$dir/.lock" 2>/dev/null; then echo $$ > "$dir/.lock/pid"; trap unlock EXIT; return 0; fi
-    pid=$(cat "$dir/.lock/pid" 2>/dev/null || true)
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && [ "$(cat "$dir/.lock/pid" 2>/dev/null)" = "$pid" ]; then
-      rm -rf "$dir/.lock"; continue
+  local L="$dir/.lock" tries="${COORD_LOCK_TRIES:-100}" i=0 c=0 o pid
+  [[ "$tries" =~ ^[0-9]+$ ]] || tries=100
+  lk_tok="$$.$RANDOM$RANDOM"
+  while :; do
+    # A legacy lock directory: skip ln, which would make the link inside it (and refresh its age).
+    if { [ ! -d "$L" ] || [ -L "$L" ]; } && ln -s "$lk_tok" "$L" 2>/dev/null; then
+      [ "$(readlink "$L" 2>/dev/null)" = "$lk_tok" ] && return 0
+      rm -f "$L/$lk_tok" 2>/dev/null
     fi
+    [ -w "$dir" ] || { echo "status.sh: cannot lock: $dir is not writable" >&2; lk_tok=""; return 1; }
+    o=$(lk_owner "$L"); pid=${o#dir.}; pid=${pid%%.*}
+    if [ -n "$o" ] && [ "$c" -lt 10 ]; then
+      if [[ "$pid" =~ ^[0-9]+$ ]] && ! lk_alive "$pid"; then lk_clear "$L" "$o" && { c=$((c + 1)); continue; }
+      elif ! [[ "$pid" =~ ^[0-9]+$ ]] && [ -n "$(find "$L" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+        lk_clear "$L" "$o" && { c=$((c + 1)); continue; }
+      fi
+    fi
+    i=$((i + 1)); [ "$i" -lt "$tries" ] || break
     sleep 0.1
   done
-  echo "status.sh: $dir/.lock is held${pid:+ by pid $pid}; retry (remove it only if that process is gone)" >&2
+  lk_tok=""
+  if [[ "$pid" =~ ^[0-9]+$ ]] && lk_alive "$pid"; then
+    echo "status.sh: $L is held by pid $pid ($(ps -o comm= -p "$pid" 2>/dev/null)); retry. If that pid is not a status.sh or ready.sh run, it was reused: remove $L" >&2
+  elif [ -n "$o" ] && ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+    echo "status.sh: $L has no owner pid; it is cleared once it is over a minute old, or remove it if no status.sh or ready.sh is running" >&2
+  else
+    echo "status.sh: $L could not be cleared (owner: ${o:-none}); remove $L and $L.clear.* if no status.sh or ready.sh is running" >&2
+  fi
   return 1
 }
-unlock() { rm -rf "$dir/.lock"; trap - EXIT; }
-# Atomic write under the lock: jq program and args, applied to the current file.
+unlock() { [ -z "$lk_tok" ] || [ "$(readlink "$dir/.lock" 2>/dev/null)" != "$lk_tok" ] || rm -f "$dir/.lock"; lk_tok=""; }
+cleanup() { [ -z "$tmp" ] || rm -f "$tmp" "$tmp.err"; unlock; }
+trap cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+# Atomic write under the lock: jq program and args, applied to the current file. Returns 1 when the lock is not
+# taken, 5 when the program raised "dispatch changed; retry", 2 for any other jq error.
 write() {
   mkdir -p "$dir"
   [ -f "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore"
   lock || return 1
-  local tmp; tmp=$(mktemp "$dir/.status.XXXXXX")
-  if current | jq "$@" > "$tmp" 2> "$tmp.err"; then mv "$tmp" "$file"; rm -f "$tmp.err"; unlock; return 0; fi
-  sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; rm -f "$tmp" "$tmp.err"; unlock; return 2
+  tmp=$(mktemp "$dir/.status.XXXXXX") || { tmp=""; unlock; return 1; }
+  if current | jq "$@" > "$tmp" 2> "$tmp.err"; then mv "$tmp" "$file"; rm -f "$tmp.err"; tmp=""; unlock; return 0; fi
+  local rc=2; ! grep -q 'dispatch changed; retry' "$tmp.err" || rc=5
+  sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; rm -f "$tmp" "$tmp.err"; tmp=""; unlock; return "$rc"
 }
 need() { [ "$1" -ge 2 ] || { echo "status.sh: $2 needs a value" >&2; exit 2; }; }
 
@@ -146,16 +180,18 @@ case "${1:-}" in
           + (if $note != "" then {note:$note} else {} end)
           + {updated_at:$t})
       | if bind == ($old | bind) then . elif $old.state == "accepted" and .state == "accepted" then error("rebind")
-        else del(.ready) end' <<<"${prev:-null}" 2>/dev/null) || {
-      echo "status.sh: refusing: dispatch \"$key\" is accepted; move it out of accepted with --state before changing pr, paths or run_id" >&2
-      exit 4; }
+        else del(.ready) end' <<<"${prev:-null}" 2>&1) || {
+      case "$rec" in *rebind*)
+        echo "status.sh: refusing: dispatch \"$key\" is accepted; move it out of accepted with --state before changing pr, paths or run_id" >&2
+        exit 4;; esac
+      echo "status.sh: could not build the dispatch record: ${rec#jq: error (at <stdin>:*): }" >&2; exit 2; }
     if [ "$(jq -r .state <<<"$rec")" = "accepted" ] && [ "$(jq -r '.state // ""' <<<"$pj")" != "accepted" ]; then
       refuse() { echo "status.sh: refusing: dispatch \"$key\" $*" >&2; exit 4; }
       rerun="; run scripts/ready.sh --key $key first"
       why=$(jq -r --arg k "$key" --arg gh "${GH_HOST:-github.com}" "$lib"'
         .ready as $v
-        | if ($v | type) != "object" or $v.ok != true then "has no passing READY check"
-          elif $v.unreadable == true or $v.in_progress == true then "has a READY check that did not finish"
+        | if ($v | type) == "object" and $v.in_progress == true then "has a READY check that did not finish"
+          elif ($v | type) != "object" or $v.ok != true or $v.unreadable == true then "has no passing READY check"
           elif $v.allow_pending != false then "has a READY verdict that does not rule out --allow-pending"
           elif $v.blockers != [] then "has a READY verdict with blockers"
           elif $v.key != $k then "has a READY verdict recorded for another dispatch"
@@ -177,7 +213,7 @@ case "${1:-}" in
     write --arg k "$key" --argjson prev "${prev:-null}" --argjson rec "$rec" '
       if (.dispatches[$k] // null) != $prev then error("dispatch changed; retry (\"\($k)\" was updated while this ran)")
       else . end
-      | .dispatches = (.dispatches // {}) | .dispatches[$k] = $rec' || { rc=$?; [ "$rc" -eq 2 ] && exit 5; exit 1; }
+      | .dispatches = (.dispatches // {}) | .dispatches[$k] = $rec' || exit $?
     jq -r --arg k "$key" '.dispatches[$k] | "dispatch \($k): \(.state)\(if .base_sha then " base \(.base_sha[0:9])" else "" end)"' "$file"
     ;;
   *)

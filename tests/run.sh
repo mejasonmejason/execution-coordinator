@@ -602,6 +602,113 @@ acc bf; t $? 0 "forms: accepted after equivalent PR and path changes"
 ed ".dispatches.bl = {state:\"accepted\", pr:\"$U\", ready:{ok:true, head:\"$H\"}}"
 "$st" dispatch bl --note "merged, verified" >/dev/null 2>&1; t $? 0 "legacy: an accepted old-shape dispatch takes --note"
 
+# ---- READY run tokens, lock ownership, post-merge re-checks (#44) ---------------------------------------------
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+CR='[{"state":"CHANGES_REQUESTED","user":{"login":"rev"}}]'
+# Overlapping READY runs: a newer run records a fail while the older run is still checking. The older pass stays out.
+"$st" dispatch ov --pr "$U" --paths "$ALL" --state awaiting-acceptance >/dev/null
+printf '%s\n' "echo '$CR' > '$STUB_DIR/reviews.json'" "cd '$R' && '$ready' --key ov >/dev/null 2>&1" \
+  "echo '[]' > '$STUB_DIR/reviews.json'" > "$STUB_DIR/side.sh"
+out=$("$ready" --key ov 2>&1); t $? 0 "overlap: the older run passes on its own reads"
+has "$out" "this verdict was not recorded" "overlap: the older run says its verdict was not recorded"
+t "$(sj '.dispatches.ov.ready | [.ok, .blockers[0]] | map(tostring) | join(",")')" "false,changes requested by rev" \
+  "overlap: the newer fail survives the older pass"
+acc ov; t $? 4 "overlap: accepted refused after the newer READY failed"
+# A newer run still in progress when the older one finishes: its in-progress record stays.
+"$ready" --key ov >/dev/null
+printf '%s\n' "f='$R/.coordinator/status.json'; jq '.dispatches.ov.ready = {ok: false, in_progress: true, token: \"newer\", blockers: [\"READY check in progress\"]}' \"\$f\" > \"\$f.x\" && mv \"\$f.x\" \"\$f\"" > "$STUB_DIR/side.sh"
+"$ready" --key ov >/dev/null 2>&1; t $? 0 "overlap: an older run passes while a newer one is in progress"
+t "$(sj '.dispatches.ov.ready | [.ok, .in_progress, .token] | map(tostring) | join(",")')" "false,true,newer" \
+  "overlap: the newer in-progress record stays"
+out=$("$st" dispatch ov --state accepted 2>&1); t $? 4 "overlap: accepted refused while the newer READY is in progress"
+has "$out" "has a READY check that did not finish" "overlap: the refusal names the unfinished check"
+# A --run-id change during the run clears the verdict, and the run does not put its pass back.
+printf '%s\n' "cd '$R' && '$st' dispatch ov --run-id r9 >/dev/null 2>&1" > "$STUB_DIR/side.sh"
+"$ready" --key ov >/dev/null 2>&1; t "$(sj '.dispatches.ov.ready // "cleared"')" cleared "overlap: a run-id change during the run leaves no verdict"
+# Post-merge re-check: a merged PR at the stored verdict's head keeps that verdict.
+"$st" dispatch mg --pr "$U" --paths "$ALL" --state awaiting-acceptance >/dev/null; "$ready" --key mg >/dev/null
+setj pr.json '.state = "closed" | .merged = true | .mergeable = null | .mergeable_state = "unknown"'
+out=$("$ready" --key mg 2>&1); t $? 1 "merged: a post-merge READY is NOT READY"
+has "$out" "that verdict is kept" "merged: it says the stored verdict is kept"
+t "$(sj '.dispatches.mg.ready | [.ok, .head] | map(tostring) | join(",")')" "true,$H" "merged: the pass at the merged head is kept"
+acc mg; t $? 0 "merged: accepted after a post-merge re-check"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+"$st" dispatch mh --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key mh >/dev/null
+setj pr.json ".state = \"closed\" | .merged = true | .head.sha = \"$H2\""
+"$ready" --key mh >/dev/null 2>&1; t "$(sj .dispatches.mh.ready.ok)" false "merged: a PR merged at another head does not keep the verdict"
+fixtures; echo '[]' > "$STUB_DIR/files.json"
+# The lock is a symlink whose target names the owner. A dead owner's lock is cleared, and nothing is left behind.
+LK="$R/.coordinator/.lock"
+sh -c 'exit 0' & dead=$!; wait "$dead"
+ln -s "$dead.1" "$LK"
+"$st" dispatch lk --note a >/dev/null 2>&1; t $? 0 "lock: a stale lock with a dead owner is cleared"
+t "$(ls -A "$R/.coordinator" | grep -c '^\.lock')" 0 "lock: no lock or clear marker is left behind"
+# One clearer per stale lock: while another process clears it, this writer removes nothing.
+ln -s "$dead.1" "$LK"; ln -s $$ "$LK.clear.$dead.1"
+COORD_LOCK_TRIES=1 "$st" dispatch lk --note b >/dev/null 2>&1; [ $? -ne 0 ]; t $? 0 "lock: a stale lock another process is clearing is not cleared twice"
+t "$(readlink "$LK")" "$dead.1" "lock: that stale lock stays for its clearer"
+rm -f "$LK" "$LK.clear.$dead.1"
+# The clearer re-reads the owner: a live lock that replaced the stale one meanwhile is not removed.
+realps=$(command -v ps)
+printf '%s\n' '#!/usr/bin/env bash' \
+  "if [ -f '$STUB_DIR/ps-side.sh' ]; then mv '$STUB_DIR/ps-side.sh' '$STUB_DIR/ps-side.run'; bash '$STUB_DIR/ps-side.run'; fi" \
+  "exec '$realps' \"\$@\"" > "$BIN/ps"; chmod +x "$BIN/ps"
+ln -s "$dead.2" "$LK"; printf '%s\n' "rm -f '$LK'; ln -s '$$.live' '$LK'" > "$STUB_DIR/ps-side.sh"
+COORD_LOCK_TRIES=1 "$st" dispatch lk --note c >/dev/null 2>&1; [ $? -ne 0 ]; t $? 0 "lock: a writer that saw a stale lock waits when a live lock replaced it"
+t "$(readlink "$LK")" "$$.live" "lock: the live lock that replaced a stale one is not removed"
+t "$(sj .dispatches.lk.note)" a "lock: nothing written while the live lock is held"
+rm -f "$BIN/ps"
+# COORD_LOCK_TRIES=0 makes one try, the same with GNU and BSD userland. A live lock's message covers pid reuse.
+out=$(COORD_LOCK_TRIES=0 "$st" dispatch lk --note d 2>&1); t $? 1 "lock: COORD_LOCK_TRIES=0 fails at once on a live lock"
+has "$out" "If that pid is not a status.sh or ready.sh run, it was reused" "lock: the live-lock message covers a reused pid"
+rm -f "$LK"
+COORD_LOCK_TRIES=0 "$st" dispatch lk --note d >/dev/null 2>&1; t $? 0 "lock: COORD_LOCK_TRIES=0 takes a free lock"
+# A lock with no owner pid (an old lock directory) is cleared once it is over a minute old.
+mkdir "$LK"
+out=$(COORD_LOCK_TRIES=1 "$st" dispatch lk --note e 2>&1); t $? 1 "lock: a new lock with no owner pid blocks"
+has "$out" "has no owner pid" "lock: the message says the lock has no owner pid"
+touch -t 202001010000 "$LK"
+COORD_LOCK_TRIES=1 "$st" dispatch lk --note e >/dev/null 2>&1; t $? 0 "lock: a lock with no owner pid over a minute old is cleared"
+[ ! -e "$LK" ]; t $? 0 "lock: released after the write"
+# A .coordinator directory the writer cannot write: say so at once, not "lock is held".
+W=$(mktemp -d); chmod 755 "$W"; mkdir "$W/repo"
+(cd "$W/repo" && git init -q && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m i \
+  && "$st" dispatch k --pr "$U" >/dev/null)
+chmod 555 "$W/repo/.coordinator"
+asuser() {
+  if [ "$(id -u)" -ne 0 ]; then (cd "$W/repo" && "$@")
+  else chown -R nobody "$W"; runuser -u nobody -- env PATH="$PATH" HOME="$W" bash -c 'cd "$1" && shift && "$@"' _ "$W/repo" "$@"; fi
+}
+if [ "$(id -u)" -ne 0 ] || command -v runuser >/dev/null; then
+  out=$(COORD_LOCK_TRIES=50 asuser "$st" dispatch k --note x 2>&1); t $? 1 "lock: status.sh fails on a .coordinator it cannot write"
+  has "$out" "is not writable" "lock: status.sh says the directory is not writable"
+  out=$(COORD_LOCK_TRIES=50 asuser "$ready" --key k 2>&1); t $? 3 "lock: ready.sh --key exits 3 on a .coordinator it cannot write"
+  has "$out" "is not writable" "lock: ready.sh says the directory is not writable"
+else
+  for n in 1 2 3 4; do echo "PASS lock: not-writable case $n (skipped: root without runuser)"; pass=$((pass + 1)); done
+fi
+chmod 755 "$W/repo/.coordinator"; rm -rf "$W"
+# A jq error is reported as one: exit 2, not 4 ("accepted") or 5 ("dispatch changed").
+ed '.dispatches.bj = {state: "running", paths: 5}'
+out=$("$st" dispatch bj --run-id r2 2>&1); t $? 2 "jq: a dispatch record that cannot be built exits 2"
+has "$out" "could not build the dispatch record" "jq: the message says the record could not be built"
+ed 'del(.dispatches.bj)'
+"$st" dispatch bj --pr "$U" --paths "$ALL" >/dev/null; "$ready" --key bj >/dev/null
+cp "$R/.coordinator/status.json" "$STUB_DIR/st.bak"
+printf '%s\n' "echo '{\"dispatches\": 5}' > '$R/.coordinator/status.json'" > "$STUB_DIR/side.sh"
+out=$("$st" dispatch bj --state accepted 2>&1); t $? 2 "jq: a jq error in the final write exits 2"
+hasnt "$out" "dispatch changed" "jq: a jq error is not reported as dispatch changed"
+cp "$STUB_DIR/st.bak" "$R/.coordinator/status.json"
+# A ready.sh stopped by TERM removes its temp files and leaves ok=false, in progress.
+TD=$(mktemp -d)
+"$st" dispatch tm --pr "$U" --paths "$ALL" >/dev/null
+printf '%s\n' 'kill -TERM "$(ps -o ppid= -p "$PPID" | tr -d " ")"' > "$STUB_DIR/side.sh"
+TMPDIR="$TD" "$ready" --key tm >/dev/null 2>&1; t $? 143 "cleanup: ready.sh stopped by TERM exits 143"
+t "$(ls -A "$TD" | wc -l | tr -d ' ')" 0 "cleanup: it leaves no temp files"
+t "$(ls -A "$R/.coordinator" | grep -c '^\.status\.\|^\.lock')" 0 "cleanup: no status temp file or lock is left"
+t "$(sj '.dispatches.tm.ready | [.ok, .in_progress] | map(tostring) | join(",")')" "false,true" "cleanup: the stopped run leaves ok=false, in progress"
+rm -rf "$TD"
+
 # ---- merge gate ----------------------------------------------------------------------------------------------
 g() { jq -n --arg c "$1" --arg d "$2" '{tool_input:{command:$c}, cwd:$d}' | "$gate" 2> "$BIN/gate.err"; }
 fixtures; echo '[]' > "$STUB_DIR/files.json"
