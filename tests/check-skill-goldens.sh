@@ -136,6 +136,8 @@ expect 1 "description YAML number" "sedi -E 's/^(description:).*/\\1 1.5/' SKILL
 expect 0 "quoted YAML boolean is text" "set_compat \"compatibility: 'true'\""
 expect 1 "escaped parenthesis in a link target" "append SKILL.md 'See [broken](docs/nope\\(v1.md).'" "SKILL.md links to docs/nope(v1.md, which does not exist"
 expect 1 "README test count wrong" "sedi -E 's/(bash tests\\/run\\.sh +# )[0-9]+/\\199/' README.md" "README.md says 99 cases"
+# Advisor review of v11.2: an escaped backtick does not open a code span, so a broken link after it is still checked.
+expect 1 "escaped backtick does not hide a broken link" "append SKILL.md 'Use \\\` literally; read [x](docs/nope.md), then \`code\`.'" "SKILL.md links to docs/nope.md, which does not exist"
 
 echo "TOTAL pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

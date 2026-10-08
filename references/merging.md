@@ -43,6 +43,8 @@ It warns on failing non-required checks, deleted tests, changed CI, test or lint
 
 The gate checks a merge only when the merge is its own top-level command, optionally after variable assignments or `env`. It blocks nested forms (`$(...)`, backticks, subshells, `bash -c`, `eval`, `xargs`), `command`/`time`/`sudo` prefixes and merge text inside the arguments of another command, and no override applies to them.
 
+The gate reads command text; it does not run a shell parser. Two limits follow. It over-blocks: any unquoted `(` or backtick anywhere in the command (even in an unrelated earlier command) makes it refuse a merge in the same command, so run the merge as its own tool call. It also under-blocks obfuscated forms: quote-splitting inside the endpoint (`mer"ge"`), ANSI-C quoting (`$'pr'`), a merge built from variables, and a nested override inside braces or control-flow bodies (`{ ...; }`, `if`, `for`) can pass. It guards against honest mistakes, not against an agent set on getting around it; rule 11 (a denial is not unavailability) is the control for that.
+
 Override only a blocker you have verified is wrong: prefix the command with `COORD_READY_OVERRIDE="<reason>"`. The override is logged in `.coordinator/overrides.log`. Disclose it in your next report, because an undisclosed override hides a skipped gate.
 
 ## Get reviews

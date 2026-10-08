@@ -72,6 +72,31 @@ segs=$(jq -rn --arg cmd "$command" --arg host "${GH_HOST:-github.com}" '
       elif ($a[$i] | test("^-(b|t|F|A|-body|-subject|-body-file|-match-head-commit|-author-email)$")) then .skip = true
       elif ($a[$i] | startswith("-") | not) and .sel == null then .sel = $a[$i]
       else . end);
+  # Walk API option tokens, never their joined text: field/header values can contain fake method flags.
+  def apivalue: IN("-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--hostname",
+    "--input", "--jq", "-q", "--template", "-t", "--cache", "-p", "--preview");
+  def apifield: IN("-f", "-F", "--field", "--raw-field", "--input");
+  def apiread($a):
+    reduce range(0; $a | length) as $i ({skip: false, method: null, post: false, bad: false};
+      $a[$i] as $w
+      | .bad = (.bad or ($w | test("\\$|`")))
+      | if .skip then .skip = false
+        elif ($w | apivalue) then
+          (if $w == "-X" or $w == "--method" then .method = $a[$i + 1] else . end)
+          | .post = (.post or ($w | apifield)) | .skip = true | .bad = (.bad or $a[$i + 1] == null)
+        elif ($w | startswith("--") and contains("=")) then
+          ($w | split("=")[0]) as $f
+          | if ($f | apivalue) then
+              (if $f == "--method" then .method = ($w | sub("^--method="; "")) else . end)
+              | .post = (.post or ($f | apifield))
+            else .bad = true end
+        elif ($w | test("^-[XfFHqtp].")) then
+          (if ($w | startswith("-X")) then .method = ($w[2:] | ltrimstr("=")) else . end)
+          | .post = (.post or ($w | test("^-[fF]")))
+        elif ($w | isflag) and ($w | IN("--paginate", "--slurp", "--silent", "--verbose", "-i", "--include", "-h", "--help") | not) then
+          .bad = true
+        else . end)
+    | (.bad | not) and ((.method // (if .post then "POST" else "GET" end)) | test("^(GET|HEAD)$"; "i"));
   def isassign: test("^[A-Za-z_][A-Za-z0-9_]*=");
   # The command word: {i, ov, repo, host} after leading assignments, `env` and env options, or null when env has an
   # option this does not know (-S/--split-string included). The last COORD_READY_OVERRIDE, GH_REPO and GH_HOST win.
@@ -93,6 +118,9 @@ segs=$(jq -rn --arg cmd "$command" --arg host "${GH_HOST:-github.com}" '
     end;
   $cmd | gsub("\\\\\n"; "")
   | [ scan("\\(*#[^\n]*|[0-9]*(?:&>>?|<<<|<<-?|>>|>\\||<>|[<>]&(?:[0-9]+-?|-)?|[<>])|(?:\"(?:[^\"\\\\]|\\\\.)*\"|\u0027[^\u0027]*\u0027|\\\\.|[^\\s;&|<>])+|&&|\\|\\||[;&|\n]") ]
+  # Conservatively keep grouping across separators. Quoted/escaped literal parentheses do not count.
+  | any(.[]; (if test("^\\(*#") then sub("#[^\n]*$"; "") else . end)
+      | gsub("\"(?:[^\"\\\\]|\\\\.)*\"|\u0027[^\u0027]*\u0027|\\\\."; "") | test("[(`]")) as $grouped
   | map(select(test("^\\(*#") | not))
   | reduce .[] as $w ([[]]; if ($w | isop) then . + [[]] else .[-1] += [$w] end)
   | [ .[] | select(length > 0) ] | . as $all
@@ -111,11 +139,11 @@ segs=$(jq -rn --arg cmd "$command" --arg host "${GH_HOST:-github.com}" '
     elif $gi != null and $u[$gi + 1] == "api" and ($seg | test("repos/[^/\\s\"\u0027]+/[^/\\s\"\u0027]+/pulls/[0-9]+/merge\\b")) then
       ($seg | capture("repos/(?<o>[^/\\s\"\u0027]+)/(?<r>[^/\\s\"\u0027]+)/pulls/(?<n>[0-9]+)/merge")) as $m
       | (([ $seg | capture("--hostname[ =](?<h>[^\\s\"\u0027]+)") | .h ][0]) // $c.host // $host) as $h
-      # With no -X/--method and no field flags, gh api sends a GET (an is-it-merged check), so no READY is needed.
-      | ($u | join(" ")) as $a | "(^| )(-X ?|--method[ =])" as $mf
+      # Only an unambiguously read-only effective method skips READY (fields/input default to POST).
       | {seg: $seg, bad: ($raw | prmerge), t: {selector: "https://\($h)/\($m.o)/\($m.r)/pull/\($m.n)", auto: false, override: $c.ov,
-         disabled: ($a | test($mf + "(GET|HEAD)( |$)"; "i") or (test($mf) or test("(^| )(-[fF]|--field|--raw-field|--input)")) == false)}}
+         disabled: apiread($u[$gi + 2:])}}
     else {seg: $seg, bad: ($raw | prmerge), t: null} end
+  | .bad = (.bad or ($grouped and .t != null))
   | "\(.bad)\t\(.t | tojson)\t\(.seg)"' 2>/dev/null) || segs=""
 # If jq fails, any command that names a merge blocks.
 [ -z "$segs" ] && [[ "$command" == *merge* ]] && segs=$'true\tnull\t-'

@@ -15,6 +15,11 @@ hasnt() { if grep -qF -- "$2" <<<"$1"; then echo "FAIL $3 (unexpected '$2')"; fa
 export HOME; HOME=$(mktemp -d)
 R=$(mktemp -d); NR=$(mktemp -d); BIN=$(mktemp -d); export STUB_DIR; STUB_DIR=$(mktemp -d)
 trap 'rm -rf "$HOME" "$R" "$NR" "$BIN" "$STUB_DIR"' EXIT
+# macOS has no `timeout`. Use `gtimeout` (coreutils) when present, else a perl alarm, so the two gate timing cases run everywhere.
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then timeout() { gtimeout "$@"; }
+  else timeout() { local secs=$1; shift; perl -e 'alarm shift; exec @ARGV' "$secs" "$@"; }; fi
+fi
 unset CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID COORD_QUIET COORD_KEEPALIVE COORD_SESSION_START AGENT_SESSION_NAME GH_HOST
 cd "$R" && git init -q && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
 sj() { jq -r "$1" "$R/.coordinator/status.json"; }
@@ -549,16 +554,23 @@ t "$rc" 5 "race: accepted refused (exit 5) when the record changed during the he
 has "$out" "dispatch changed; retry" "race: the refusal says to retry"
 t "$(sj '[.dispatches.bw.state, .dispatches.bw.ready.ok] | join(",")')" "running,false" "race: the newer verdict survives"
 echo '[]' > "$STUB_DIR/reviews.json"
-# Read-modify-write holds a mkdir lock. A lock still held after COORD_LOCK_TRIES is reported as left over.
+# Read-modify-write holds a mkdir lock. A lock still held after COORD_LOCK_TRIES is reported as held, with a check-first hint.
 mkdir "$R/.coordinator/.lock"
 out=$(COORD_LOCK_TRIES=3 "$st" dispatch bw --note x 2>&1); t $? 1 "lock: status.sh fails while the lock is held"
-has "$out" ".coordinator/.lock is left over from a stopped process; remove it" "lock: the message says the lock is left over"
+has "$out" "if no status.sh or ready.sh is running, remove it" "lock: the message says to check for a live writer before removing the lock"
 t "$(sj '.dispatches.bw.note // "none"')" none "lock: nothing written while locked"
 COORD_LOCK_TRIES=3 "$ready" --key bw >/dev/null 2>&1; t $? 3 "lock: ready.sh --key exits 3 when it cannot record the verdict"
 [ -d "$R/.coordinator/.lock" ]; t $? 0 "lock: a writer never removes a lock it did not take"
 rmdir "$R/.coordinator/.lock"
 COORD_LOCK_TRIES=0 "$st" dispatch bw --note y >/dev/null 2>&1; t $? 0 "lock: COORD_LOCK_TRIES=0 makes one try and takes a free lock"
 t "$(sj .dispatches.bw.note)" y "lock: the write lands once the lock is removed"
+# Review of v11.2: a failed final rename must not report success, and READY's temp file must be exclusive.
+mkdir -p "$BIN/mvfail"; printf '#!/bin/sh\nexit 73\n' > "$BIN/mvfail/mv"; chmod +x "$BIN/mvfail/mv"
+PATH="$BIN/mvfail:$PATH" "$st" dispatch bw --note zz >/dev/null 2>&1; t $? 2 "status.sh: a failed rename exits nonzero"
+t "$(sj .dispatches.bw.note)" y "status.sh: a failed rename leaves the old record"
+t "$(ls -A "$R/.coordinator" | grep -c '^\.status\.')" 0 "status.sh: a failed rename leaves no temp file"
+"$ready" --key bw >/dev/null 2>&1
+t "$(ls -A "$R/.coordinator" | grep -c '^\.status\.')" 0 "ready.sh: no temp file is left after a recorded verdict"
 [ ! -e "$R/.coordinator/.lock" ]; t $? 0 "lock: released after the write"
 # The race also covers a concurrent --run-id change.
 fixtures; echo '[]' > "$STUB_DIR/files.json"
@@ -771,6 +783,50 @@ ge $U" "a backslash-newline inside merge"
 gr "gh pr merge -A a@b.c $U --squash" "gh pr merge -A <email> <url>"
 STUB_PRVIEW=1 gr "gh pr merge --squash 2>&1" "gh pr merge --squash 2>&1 (redirection is not the PR)"
 STUB_PRVIEW=1 gr "gh pr merge --squash > /tmp/out.txt" "gh pr merge --squash > file"
+# REST methods are option tokens, not text in a field; nested merges stay nested across separators.
+for cmd in \
+  'gh api -X PUT repos/o/r/pulls/7/merge -f "commit_title=example --method GET"' \
+  'gh api -X PUT repos/o/r/pulls/7/merge -f "commit_title=example -X GET"' \
+  'gh api repos/o/r/pulls/7/merge -f "commit_title=example --method GET"' \
+  'gh api -X PUT repos/o/r/pulls/7/merge -F "commit_title=example --method GET"' \
+  'gh api -X GET --method PUT repos/o/r/pulls/7/merge' \
+  'gh api --method=HEAD -XPUT repos/o/r/pulls/7/merge' \
+  'gh api -X PUT repos/o/r/pulls/7/merge --raw-field="commit_title=--method GET"' \
+  'gh api repos/o/r/pulls/7/merge --field=merge_method=squash' \
+  'gh api repos/o/r/pulls/7/merge --input=payload.json' \
+  'gh api $METHOD_FLAGS repos/o/r/pulls/7/merge' \
+  'gh api repos/o/r/pulls/7/merge --unknown' \
+  'gh api repos/o/r/pulls/7/merge --method'; do
+  : > "$STUB_DIR/calls.log"
+  gr "$cmd" "tokenised REST method: $cmd"
+  has "$(cat "$STUB_DIR/calls.log")" "api --hostname github.com repos/o/r/pulls/7" "gate: REST method regression called READY"
+done
+# Values of every supported option are consumed even when the value looks like a method flag.
+for flag in -f -F --field --raw-field --input -H --header --hostname --jq -q --template -t --cache -p --preview; do
+  gr "gh api -X PUT repos/o/r/pulls/7/merge $flag '-X' GET" "REST $flag value is not a method"
+done
+for args in '-X GET' '--method=GET' '--method head' '-XGET' '-X PUT --method GET' '--method PUT -X HEAD -f x=y'; do
+  : > "$STUB_DIR/calls.log"
+  g "gh api $args repos/o/r/pulls/7/merge" "$R"; t $? 0 "gate: read-only REST $args allowed"
+  t "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')" 0 "gate: read-only REST $args skips READY"
+done
+: > "$STUB_DIR/calls.log"
+for sep in ';' '&&' '||' '|' $'\n'; do
+  for prefix in '' 'COORD_READY_OVERRIDE=inside '; do
+    gn "(true$sep ${prefix}gh pr merge $U)" "subshell after ${sep//$'\n'/newline} with prefix '$prefix'"
+    gn "echo \$(true$sep ${prefix}gh pr merge $U)" "substitution after ${sep//$'\n'/newline} with prefix '$prefix'"
+  done
+done
+for prefix in '' 'COORD_READY_OVERRIDE=inside '; do
+  gn "(# comment after the opening group
+${prefix}gh pr merge $U)" "subshell after an opening comment with prefix '$prefix'"
+done
+gn "echo \`true; gh pr merge $U\`" "backtick merge after a separator"
+gn "echo \`true; COORD_READY_OVERRIDE=inside gh pr merge $U\`" "backtick override after a separator"
+t "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')" 0 "gate: nested regressions never call READY"
+grep -q "inside" "$R/.coordinator/overrides.log"; t $? 1 "gate: nested regressions never log an override"
+g "true; COORD_READY_OVERRIDE=top-level gh pr merge $U --body 'literal (parentheses); text'" "$R"
+t $? 0 "gate: top-level override with quoted parentheses remains allowed"
 long=""; for _ in $(seq 600); do long+="gh -x pr -x "; done
 out=$(timeout 30 bash -c 'jq -n --arg c "$1" --arg d "$2" "{tool_input:{command:\$c}, cwd:\$d}" | "$3" 2>/dev/null; echo $?' _ "$long" "$R" "$gate")
 t "$out" 0 "gate: 600 repeats of gh -x pr -x finish in time"
