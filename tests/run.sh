@@ -783,6 +783,50 @@ ge $U" "a backslash-newline inside merge"
 gr "gh pr merge -A a@b.c $U --squash" "gh pr merge -A <email> <url>"
 STUB_PRVIEW=1 gr "gh pr merge --squash 2>&1" "gh pr merge --squash 2>&1 (redirection is not the PR)"
 STUB_PRVIEW=1 gr "gh pr merge --squash > /tmp/out.txt" "gh pr merge --squash > file"
+# REST methods are option tokens, not text in a field; nested merges stay nested across separators.
+for cmd in \
+  'gh api -X PUT repos/o/r/pulls/7/merge -f "commit_title=example --method GET"' \
+  'gh api -X PUT repos/o/r/pulls/7/merge -f "commit_title=example -X GET"' \
+  'gh api repos/o/r/pulls/7/merge -f "commit_title=example --method GET"' \
+  'gh api -X PUT repos/o/r/pulls/7/merge -F "commit_title=example --method GET"' \
+  'gh api -X GET --method PUT repos/o/r/pulls/7/merge' \
+  'gh api --method=HEAD -XPUT repos/o/r/pulls/7/merge' \
+  'gh api -X PUT repos/o/r/pulls/7/merge --raw-field="commit_title=--method GET"' \
+  'gh api repos/o/r/pulls/7/merge --field=merge_method=squash' \
+  'gh api repos/o/r/pulls/7/merge --input=payload.json' \
+  'gh api $METHOD_FLAGS repos/o/r/pulls/7/merge' \
+  'gh api repos/o/r/pulls/7/merge --unknown' \
+  'gh api repos/o/r/pulls/7/merge --method'; do
+  : > "$STUB_DIR/calls.log"
+  gr "$cmd" "tokenised REST method: $cmd"
+  has "$(cat "$STUB_DIR/calls.log")" "api --hostname github.com repos/o/r/pulls/7" "gate: REST method regression called READY"
+done
+# Values of every supported option are consumed even when the value looks like a method flag.
+for flag in -f -F --field --raw-field --input -H --header --hostname --jq -q --template -t --cache -p --preview; do
+  gr "gh api -X PUT repos/o/r/pulls/7/merge $flag '-X' GET" "REST $flag value is not a method"
+done
+for args in '-X GET' '--method=GET' '--method head' '-XGET' '-X PUT --method GET' '--method PUT -X HEAD -f x=y'; do
+  : > "$STUB_DIR/calls.log"
+  g "gh api $args repos/o/r/pulls/7/merge" "$R"; t $? 0 "gate: read-only REST $args allowed"
+  t "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')" 0 "gate: read-only REST $args skips READY"
+done
+: > "$STUB_DIR/calls.log"
+for sep in ';' '&&' '||' '|' $'\n'; do
+  for prefix in '' 'COORD_READY_OVERRIDE=inside '; do
+    gn "(true$sep ${prefix}gh pr merge $U)" "subshell after ${sep//$'\n'/newline} with prefix '$prefix'"
+    gn "echo \$(true$sep ${prefix}gh pr merge $U)" "substitution after ${sep//$'\n'/newline} with prefix '$prefix'"
+  done
+done
+for prefix in '' 'COORD_READY_OVERRIDE=inside '; do
+  gn "(# comment after the opening group
+${prefix}gh pr merge $U)" "subshell after an opening comment with prefix '$prefix'"
+done
+gn "echo \`true; gh pr merge $U\`" "backtick merge after a separator"
+gn "echo \`true; COORD_READY_OVERRIDE=inside gh pr merge $U\`" "backtick override after a separator"
+t "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')" 0 "gate: nested regressions never call READY"
+grep -q "inside" "$R/.coordinator/overrides.log"; t $? 1 "gate: nested regressions never log an override"
+g "true; COORD_READY_OVERRIDE=top-level gh pr merge $U --body 'literal (parentheses); text'" "$R"
+t $? 0 "gate: top-level override with quoted parentheses remains allowed"
 long=""; for _ in $(seq 600); do long+="gh -x pr -x "; done
 out=$(timeout 30 bash -c 'jq -n --arg c "$1" --arg d "$2" "{tool_input:{command:\$c}, cwd:\$d}" | "$3" 2>/dev/null; echo $?' _ "$long" "$R" "$gate")
 t "$out" 0 "gate: 600 repeats of gh -x pr -x finish in time"
