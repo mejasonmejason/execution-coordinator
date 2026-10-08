@@ -15,6 +15,11 @@ hasnt() { if grep -qF -- "$2" <<<"$1"; then echo "FAIL $3 (unexpected '$2')"; fa
 export HOME; HOME=$(mktemp -d)
 R=$(mktemp -d); NR=$(mktemp -d); BIN=$(mktemp -d); export STUB_DIR; STUB_DIR=$(mktemp -d)
 trap 'rm -rf "$HOME" "$R" "$NR" "$BIN" "$STUB_DIR"' EXIT
+# macOS has no `timeout`. Use `gtimeout` (coreutils) when present, else a perl alarm, so the two gate timing cases run everywhere.
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then timeout() { gtimeout "$@"; }
+  else timeout() { local secs=$1; shift; perl -e 'alarm shift; exec @ARGV' "$secs" "$@"; }; fi
+fi
 unset CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID COORD_QUIET COORD_KEEPALIVE COORD_SESSION_START AGENT_SESSION_NAME GH_HOST
 cd "$R" && git init -q && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
 sj() { jq -r "$1" "$R/.coordinator/status.json"; }
@@ -549,16 +554,23 @@ t "$rc" 5 "race: accepted refused (exit 5) when the record changed during the he
 has "$out" "dispatch changed; retry" "race: the refusal says to retry"
 t "$(sj '[.dispatches.bw.state, .dispatches.bw.ready.ok] | join(",")')" "running,false" "race: the newer verdict survives"
 echo '[]' > "$STUB_DIR/reviews.json"
-# Read-modify-write holds a mkdir lock. A lock still held after COORD_LOCK_TRIES is reported as left over.
+# Read-modify-write holds a mkdir lock. A lock still held after COORD_LOCK_TRIES is reported as held, with a check-first hint.
 mkdir "$R/.coordinator/.lock"
 out=$(COORD_LOCK_TRIES=3 "$st" dispatch bw --note x 2>&1); t $? 1 "lock: status.sh fails while the lock is held"
-has "$out" ".coordinator/.lock is left over from a stopped process; remove it" "lock: the message says the lock is left over"
+has "$out" "if no status.sh or ready.sh is running, remove it" "lock: the message says to check for a live writer before removing the lock"
 t "$(sj '.dispatches.bw.note // "none"')" none "lock: nothing written while locked"
 COORD_LOCK_TRIES=3 "$ready" --key bw >/dev/null 2>&1; t $? 3 "lock: ready.sh --key exits 3 when it cannot record the verdict"
 [ -d "$R/.coordinator/.lock" ]; t $? 0 "lock: a writer never removes a lock it did not take"
 rmdir "$R/.coordinator/.lock"
 COORD_LOCK_TRIES=0 "$st" dispatch bw --note y >/dev/null 2>&1; t $? 0 "lock: COORD_LOCK_TRIES=0 makes one try and takes a free lock"
 t "$(sj .dispatches.bw.note)" y "lock: the write lands once the lock is removed"
+# Review of v11.2: a failed final rename must not report success, and READY's temp file must be exclusive.
+mkdir -p "$BIN/mvfail"; printf '#!/bin/sh\nexit 73\n' > "$BIN/mvfail/mv"; chmod +x "$BIN/mvfail/mv"
+PATH="$BIN/mvfail:$PATH" "$st" dispatch bw --note zz >/dev/null 2>&1; t $? 2 "status.sh: a failed rename exits nonzero"
+t "$(sj .dispatches.bw.note)" y "status.sh: a failed rename leaves the old record"
+t "$(ls -A "$R/.coordinator" | grep -c '^\.status\.')" 0 "status.sh: a failed rename leaves no temp file"
+"$ready" --key bw >/dev/null 2>&1
+t "$(ls -A "$R/.coordinator" | grep -c '^\.status\.')" 0 "ready.sh: no temp file is left after a recorded verdict"
 [ ! -e "$R/.coordinator/.lock" ]; t $? 0 "lock: released after the write"
 # The race also covers a concurrent --run-id change.
 fixtures; echo '[]' > "$STUB_DIR/files.json"

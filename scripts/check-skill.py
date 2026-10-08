@@ -299,7 +299,7 @@ for label, got, limit in (("lines", n_lines, 500), ("words", n_words, 5000), ("c
 LINK_TEXT = r"(?:[^\[\]\\]|\\.|\[(?:[^\[\]\\]|\\.)*\])*"  # one level of nested brackets, as in [![badge](img)](x)
 INLINE_LINK = re.compile(r"\[" + LINK_TEXT + r"\]\(\s*(<[^>\n]*>|(?:\\.|[^()\s\\]|\((?:\\.|[^()\s\\])*\))+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
 REF_DEF = re.compile(r"^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(<[^>\n]*>|\S+)", re.M)
-CODE_SPAN = re.compile(r"(`+)(?!`)(?:(?!\n[ \t]*\n).)*?(?<!`)\1(?!`)", re.S)  # never across a blank line
+CODE_SPAN = re.compile(r"(?<!\\)(`+)(?!`)(?:(?!\n[ \t]*\n).)*?(?<!`)\1(?!`)", re.S)  # never across a blank line
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 LIST_ITEM = re.compile(r" {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)")
 

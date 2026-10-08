@@ -58,7 +58,7 @@ The verdict follows these rules:
 Both scripts write under the `.coordinator/.lock` directory:
 
 - A dispatch update that finds the record changed while it ran exits 5. Run it again.
-- A script waits up to `COORD_LOCK_TRIES` tries of 0.1 seconds for the lock (default 100; 0 means one try). A lock still held after that is left over from a stopped process. Remove it (`rm -r .coordinator/.lock`) and run the command again.
+- A script waits up to `COORD_LOCK_TRIES` tries of 0.1 seconds for the lock (default 100; 0 means one try). A lock still held after that is either a slow live writer or left over from a stopped process. Check that no `status.sh` or `ready.sh` process is running (`pgrep -f 'status.sh|ready.sh'`). Only then remove the lock (`rm -r .coordinator/.lock`) and run the command again; removing it under a live writer defeats the mutual exclusion.
 
 ## Local or hosted
 

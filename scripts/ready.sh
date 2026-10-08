@@ -22,18 +22,18 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # Lock: mkdir is atomic (no flock on macOS). A write holds it for milliseconds, so a lock that outlasts
-# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is left over from a stopped process.
+# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is held by a slow writer or left by a stopped process.
 # Keep these lines the same in status.sh and ready.sh.
-locked="" tmp=""
+locked="" tmp="" rtmp=""
 lock() {
   local i=0; [ -w "$dir" ] || { echo "${0##*/}: cannot lock: $dir is not writable" >&2; return 1; }
   until mkdir "$dir/.lock" 2>/dev/null; do
-    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is left over from a stopped process; remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
+    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is still held (a stopped process may have left it); if no status.sh or ready.sh is running, remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
     sleep 0.1
   done; locked=1
 }
 unlock() { [ -z "$locked" ] || rm -rf "$dir/.lock"; locked=""; }
-trap '[ -z "$tmp" ] || rm -rf "$tmp"; [ -z "$dir" ] || rm -f "$dir/.status.$$"; unlock' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+trap '[ -z "$tmp" ] || rm -rf "$tmp"; [ -z "$rtmp" ] || rm -f "$rtmp"; unlock' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
 tok="$$.$RANDOM$RANDOM.$(date +%s)"  # this run's token on the dispatch verdict
 # record VERDICT_JSON [own]: store the verdict and this run's token on dispatch $key, under the lock. With "own" it
 # writes only while the stored token is this run's. An accepted or missing dispatch is left alone. Sets the
@@ -41,12 +41,13 @@ tok="$$.$RANDOM$RANDOM.$(date +%s)"  # this run's token on the dispatch verdict
 record() {
   [ -n "${sfile:-}" ] && [ -n "${d:-}" ] || return 0
   lock || return 1
+  rtmp=$(mktemp "$dir/.status.XXXXXX") || { rtmp=""; unlock; return 1; }  # exclusive and unpredictable: never follow a planted symlink
   local rc=0; jq --arg k "$key" --arg tok "$tok" --arg own "${2:-}" --argjson v "$1" '
        .dispatches[$k] as $d
        | if $d == null or $d.state == "accepted" or ($own != "" and $d.ready.token != $tok) then .
          else (if $v.pr then .dispatches[$k].pr //= $v.pr else . end) | .dispatches[$k].ready = ($v + {key: $k, token: $tok}) end' \
-       "$sfile" > "$dir/.status.$$" && mv "$dir/.status.$$" "$sfile" || rc=1
-  rm -f "$dir/.status.$$"; unlock; return "$rc"
+       "$sfile" > "$rtmp" && mv "$rtmp" "$sfile" || rc=1
+  rm -f "$rtmp"; rtmp=""; unlock; return "$rc"
 }
 # Exit 3. With --key, the dispatch's verdict becomes ok=false, so an old pass never survives it.
 fail3() {

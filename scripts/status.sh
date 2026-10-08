@@ -19,7 +19,7 @@
 # run again, and pr, paths and run_id changes are refused unless --state moves it out of accepted.
 # Writes hold a lock directory (.coordinator/.lock). A dispatch update that finds the record changed since it
 # read it exits 5 ("dispatch changed; retry"). COORD_LOCK_TRIES sets the lock wait in 0.1s tries (default 100;
-# 0 means one try). A lock still held after that is reported as left over (exit 1).
+# 0 means one try). A lock still held after that is reported as held (exit 1); removing it is safe only when no writer is running.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "status.sh: not inside a git repository" >&2; exit 2; }
@@ -48,13 +48,13 @@ session_id() {
 }
 current() { if [ -f "$file" ]; then cat "$file"; else echo '{}'; fi; }
 # Lock: mkdir is atomic (no flock on macOS). A write holds it for milliseconds, so a lock that outlasts
-# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is left over from a stopped process.
+# COORD_LOCK_TRIES tries of 0.1s (default 100; 0 means one try) is held by a slow writer or left by a stopped process.
 # Keep these lines the same in status.sh and ready.sh.
 locked="" tmp=""
 lock() {
   local i=0; [ -w "$dir" ] || { echo "${0##*/}: cannot lock: $dir is not writable" >&2; return 1; }
   until mkdir "$dir/.lock" 2>/dev/null; do
-    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is left over from a stopped process; remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
+    i=$((i + 1)); [ "$i" -lt "${COORD_LOCK_TRIES:-100}" ] || { echo "${0##*/}: .coordinator/.lock is still held (a stopped process may have left it); if no status.sh or ready.sh is running, remove it (rm -r .coordinator/.lock) and retry" >&2; return 1; }
     sleep 0.1
   done; locked=1
 }
@@ -68,7 +68,7 @@ write() {
   lock || return 1
   tmp=$(mktemp "$dir/.status.XXXXXX") || { tmp=""; unlock; return 1; }
   local rc=0; current | jq "$@" > "$tmp" 2> "$tmp.err" || rc=$?
-  if [ "$rc" -eq 0 ]; then mv "$tmp" "$file"; else sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; fi
+  if [ "$rc" -eq 0 ]; then mv "$tmp" "$file" || { echo "status.sh: could not replace $file" >&2; rc=2; }; else sed 's/^jq: error (at [^)]*): /status.sh: /' "$tmp.err" >&2; fi
   rm -f "$tmp" "$tmp.err"; tmp=""; unlock
   case "$rc" in 0) return 0;; 10) return 5;; *) return 2;; esac
 }
