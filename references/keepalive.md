@@ -66,7 +66,7 @@ In a Claude Code cloud session, also mirror the status to the ledger and use the
    - A held reply needs a draft or a thread link.
 6. One owner per status file, and one executor per worktree. Only the owner of a member repo writes that repo's status. `scripts/status.sh` refuses non-git directories and `$HOME`.
    A nudge that quotes another session's status text means two sessions share a worktree and the nudge was misrouted. Do not answer "no change" to every nudge: one such file drew 55 nudges and 15 idle flags in 4 hours. Once, read the status file's owner, message the coordinator session that writes it, name the file, and ask it to set the true state (`waiting` or `human-gate`), then end the turn. Never edit its file.
-   The sweeper follows the same rule. It sends a status file's nudges to the coordinator session that writes the file, never to an executor that only shares the worktree, and it names the file in the message. A nudge is not a takeover: the sweeper never claims a file whose owner was active in the last 5 minutes, and only a longer silence (30 minutes) lets another session take it.
+   The sweeper follows the same rule. It sends a status file's nudges to the coordinator session that writes the file, never to an executor that only shares the worktree, and it names the file in the message. A nudge is not a takeover: the sweeper never claims a file whose owner was active in the last 30 minutes. Only that much silence, or an explicit arm by the new owner, transfers it.
 7. Before a scheduled gap or quiet hours, set `waiting` with a precise next action.
 
 Observation-only sessions have no keep-alive.
