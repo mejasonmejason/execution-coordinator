@@ -214,6 +214,10 @@ done <<<"$targets"
 {
   echo "[merge gate] Merge blocked; the READY fence is not met."
   printf '%s' "$fails"
-  echo 'Fix the blockers and retry. If a blocker is verifiably wrong (for example a stale or misread check), re-run with COORD_READY_OVERRIDE="<reason>" prefixed to the command; overrides are logged and must be reported.'
+  if grep -q 'READY check unreadable' <<<"$fails"; then
+    echo 'An unreadable READY check is missing evidence, not a wrong blocker: fix its cause, or retry later if it is transient. Do not override it.'
+  else
+    echo 'Fix the blockers and retry. If a blocker is verifiably wrong (for example a stale or misread check), re-run with COORD_READY_OVERRIDE="<reason>" prefixed to the command; overrides are logged and must be reported.'
+  fi
 } >&2
 exit 2
