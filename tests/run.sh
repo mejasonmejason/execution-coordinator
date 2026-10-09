@@ -707,6 +707,12 @@ g "gh pr merge $U --squash" "$R"; t $? 0 "gate: READY PR allowed"
 setj pr.json '.mergeable_state = "dirty"'
 g "gh pr merge $U --squash" "$R"; t $? 2 "gate: NOT READY PR blocked"
 has "$(cat "$BIN/gate.err")" "merge conflicts with base" "gate: reason on stderr"
+has "$(cat "$BIN/gate.err")" "COORD_READY_OVERRIDE" "gate: a NOT READY block offers the override for a verified-wrong blocker"
+GT=$(mktemp -d); mkdir -p "$GT/hooks" "$GT/scripts"; cp "$gate" "$GT/hooks/"; printf '#!/usr/bin/env bash\necho "check-runs body empty"; exit 3\n' > "$GT/scripts/ready.sh"; chmod +x "$GT/scripts/ready.sh"
+jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{tool_input:{command:$c}, cwd:$d}' | "$GT/hooks/claude-merge-gate.sh" 2> "$BIN/gate.err"; t $? 2 "gate: unreadable READY blocks"
+has "$(cat "$BIN/gate.err")" "Do not override it" "gate: unreadable READY says not to override"
+hasnt "$(cat "$BIN/gate.err")" "COORD_READY_OVERRIDE=" "gate: unreadable READY does not suggest the override"
+rm -rf "$GT"
 g "echo hi; gh api -X PUT repos/o/r/pulls/7/merge" "$R"; t $? 2 "gate: REST merge call checked"
 jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{session_id:"thrX", hook_event_name:"PreToolUse", tool_name:"Bash",
   turn_id:"t1", model:"gpt", permission_mode:"default", tool_input:{command:$c}, cwd:$d}' | "$gate" 2> "$BIN/gate.err"

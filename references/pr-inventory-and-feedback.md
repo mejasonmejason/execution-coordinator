@@ -77,7 +77,7 @@ Treat an AI or bot finding as false unless a `file:line` proves a defect. Reject
 - a null that the type or the caller already excludes;
 - a race with no shared mutable path;
 - a code snippet that does not compile;
-- a comment on unchanged lines;
+- a comment on unchanged lines that no changed code (callers, callees, shared state), config or input affects;
 - a pre-existing issue (open a task for it);
 - a change the PR states is intentional;
 - a duplicate that is already answered.

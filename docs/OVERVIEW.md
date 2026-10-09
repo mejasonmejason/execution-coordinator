@@ -88,7 +88,7 @@ flowchart TD
   I --> J["Acceptance"]
   J --> J1["ready.sh --key KEY --sha HEAD"]
   J --> J2["Coordinator re-runs<br/>validation commands"]
-  J --> J3["Fresh-context reviewer<br/>path:line per criterion"]
+  J --> J3["Fresh-context reviewer<br/>evidence per criterion<br/>(path:line or head-bound run)"]
   J1 & J2 & J3 --> K{"All pass?"}
   K -- "no" --> L["dispatch --state rejected<br/>exact findings back to executor"]
   L --> H
