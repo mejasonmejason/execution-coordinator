@@ -44,8 +44,11 @@ Each PR has one watcher. Prefer L3 events. Otherwise check threads and checks on
 
 - An unchanged `updatedAt` never excuses a missing required check or comment audit, because new checks and comments do not always change it.
 - Never run duplicate `gh pr checks --watch` loops, because they burn rate limit and report the same thing twice.
+- Watch PRs that wait on humans rarely, or only on events, and back off when the remaining GraphQL budget is low. The hourly budget is shared by every session on the account, and a watcher polling 26 PRs every 30 s used about 7,300 points an hour against a 5,000 limit, which blinded every comment audit.
 
 ## Route a message to the owner
+
+A chat or email message the user had you send makes you its owner, like a PR you own. Arrange a watch for replies, read the whole thread when one arrives and answer within the scope the user gave. Bring a new decision, commitment, date or approval back to the user with ready-to-send options. Release the conversation when it is answered or quiet, and hand it over explicitly before your session ends.
 
 | Owner | Command |
 |---|---|
