@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execution Coordinator"
+  short_description: "Drive PRs and coding agents to merged and verified"
+  default_prompt: "Use $execution-coordinator to drive these PRs and agents to merged and verified, with the READY fence and merge gate."

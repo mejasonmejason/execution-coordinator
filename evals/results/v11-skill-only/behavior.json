@@ -1,0 +1,1204 @@
+{
+  "mode": "skill",
+  "load": "skill-only",
+  "skill_md_chars": 21079,
+  "skill_references": [
+    "references/cloud-and-codex.md",
+    "references/delegation-and-validation.md",
+    "references/keepalive.md",
+    "references/lessons.md",
+    "references/merging.md",
+    "references/pr-inventory-and-feedback.md"
+  ],
+  "skill_path": "/home/user/ec-wt/fix-19-evals/SKILL.md",
+  "skill_sha256": "3f85287732380abf1dd97ddcb20e3ac66b116ae47e5aef6d95316d122600a732",
+  "skill_chars": 60176,
+  "started_utc": "2026-10-06T19:29:32+00:00",
+  "finished_utc": "2026-10-06T19:30:56+00:00",
+  "answer_model_requested": "cli-default",
+  "grader_model_requested": "cli-default",
+  "models_seen": [
+    "claude-sonnet-5-5"
+  ],
+  "claude_calls": 28,
+  "cost_usd_reported": 1.0705,
+  "runs_per_eval": 3,
+  "concurrency": 6,
+  "timeout_s": 420,
+  "retries": 1,
+  "summary": {
+    "passed": 26,
+    "failed": 31,
+    "total": 57,
+    "pass_rate": 0.456,
+    "evals": 4,
+    "runs": 12,
+    "runs_all_passed": 3,
+    "errored_expectations": 0,
+    "answer_words": {
+      "mean": 625.167,
+      "min": 428,
+      "max": 1039
+    },
+    "answer_seconds": {
+      "mean": 21.975,
+      "min": 18.2,
+      "max": 29.1
+    },
+    "goldens": 4,
+    "goldens_caught": 4,
+    "references_opened": {
+      "references/cloud-and-codex.md": 1,
+      "references/keepalive.md": 3,
+      "references/lessons.md": 3,
+      "references/pr-inventory-and-feedback.md": 3
+    }
+  },
+  "evals": [
+    {
+      "id": 10,
+      "name": "twelve-similar-migrations",
+      "runs": [
+        {
+          "run": 1,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/twelve-similar-migrations.run1.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 645,
+          "answer_seconds": 27.9,
+          "answer_tokens": {
+            "input": 12916,
+            "output": 1977
+          },
+          "answer_cost_usd": 0.0567582,
+          "expectations": [
+            {
+              "text": "The answer starts with ONE pilot migration (a single service) and does not dispatch all 12 migrations at the same time at the start.",
+              "passed": false,
+              "evidence": "\"Dispatch (all 12 at once)\" and \"I'd fan this out as 12 parallel executors\" - no pilot is used.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer waits until the pilot is verified and accepted (for example its PR passes the READY check or its validations are re-run) before it starts the remaining 11.",
+              "passed": false,
+              "evidence": "No pilot stage exists; all 12 are dispatched at once. Acceptance happens only after dispatch (\"Acceptance per PR\").",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that if 2 of the first 3 batch units fail in the same way, it stops the batch, fixes the brief (or the MIGRATION.md steps), and then resumes.",
+              "passed": false,
+              "evidence": "Only says \"watch the first reports for a shared problem... send the fix inline to the rest\" and redispatch if one fails twice. There is no 2-of-3 threshold and no stop-and-resume of the batch.",
+              "status": "ok"
+            },
+            {
+              "text": "After the pilot is accepted, the answer runs the remaining migrations in parallel (several executors at once), not strictly one after another.",
+              "passed": false,
+              "evidence": "The answer runs all 12 in parallel from the start. There is no pilot-accepted gate followed by a parallel batch of the remaining 11.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer accepts each migration separately on its own evidence (its own PR and checks), not as one combined claim for the batch.",
+              "passed": true,
+              "evidence": "\"Acceptance per PR: Run `ready.sh --key <key> --sha <head>`. Re-run each repo's validation commands myself\" plus a per-PR review, with a per-repo status table.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 1,
+            "failed": 4,
+            "total": 5,
+            "pass_rate": 0.2
+          },
+          "all_passed": false
+        },
+        {
+          "run": 2,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/twelve-similar-migrations.run2.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 645,
+          "answer_seconds": 29.1,
+          "answer_tokens": {
+            "input": 12922,
+            "output": 2082
+          },
+          "answer_cost_usd": 0.0578322,
+          "expectations": [
+            {
+              "text": "The answer starts with ONE pilot migration (a single service) and does not dispatch all 12 migrations at the same time at the start.",
+              "passed": false,
+              "evidence": "\"Dispatch (all 12 in parallel)\" and \"then dispatching all 12 executors.\" No pilot.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer waits until the pilot is verified and accepted (for example its PR passes the READY check or its validations are re-run) before it starts the remaining 11.",
+              "passed": false,
+              "evidence": "No pilot stage; all 12 are dispatched at once, with acceptance only as each reports.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that if 2 of the first 3 batch units fail in the same way, it stops the batch, fixes the brief (or the MIGRATION.md steps), and then resumes.",
+              "passed": false,
+              "evidence": "It says \"If the first failures from several repos look systematic... I'd fix the brief and send the correction inline to the live executors.\" There is no 2-of-3 threshold and no stopping of the batch; it corrects live executors.",
+              "status": "ok"
+            },
+            {
+              "text": "After the pilot is accepted, the answer runs the remaining migrations in parallel (several executors at once), not strictly one after another.",
+              "passed": false,
+              "evidence": "It runs all 12 in parallel from the start, with no pilot followed by a parallel remainder.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer accepts each migration separately on its own evidence (its own PR and checks), not as one combined claim for the batch.",
+              "passed": true,
+              "evidence": "\"Run `ready.sh --key <svc> --sha <head>`... Mark a dispatch `accepted` only after all three checks pass.\" Each service gets its own check, and the report has 12 rows.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 1,
+            "failed": 4,
+            "total": 5,
+            "pass_rate": 0.2
+          },
+          "all_passed": false
+        },
+        {
+          "run": 3,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/twelve-similar-migrations.run3.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 645,
+          "answer_seconds": 18.8,
+          "answer_tokens": {
+            "input": 12919,
+            "output": 1889
+          },
+          "answer_cost_usd": 0.0558902,
+          "expectations": [
+            {
+              "text": "The answer starts with ONE pilot migration (a single service) and does not dispatch all 12 migrations at the same time at the start.",
+              "passed": false,
+              "evidence": "\"I'd dispatch 12 executors at once. Each gets one repo, its own worktree, one branch and one PR.\" No pilot is used.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer waits until the pilot is verified and accepted (for example its PR passes the READY check or its validations are re-run) before it starts the remaining 11.",
+              "passed": false,
+              "evidence": "There is no pilot stage; all 12 are dispatched together, so nothing waits on a pilot's acceptance.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that if 2 of the first 3 batch units fail in the same way, it stops the batch, fixes the brief (or the MIGRATION.md steps), and then resumes.",
+              "passed": false,
+              "evidence": "Only says \"If an executor fails twice on the same issue, I'd change the executor or model instead of retrying.\" That is a per-executor rule, with no stop-the-batch and fix-the-brief step.",
+              "status": "ok"
+            },
+            {
+              "text": "After the pilot is accepted, the answer runs the remaining migrations in parallel (several executors at once), not strictly one after another.",
+              "passed": false,
+              "evidence": "There is no pilot-then-parallel sequence. All 12 run in parallel from the start, so this staged behavior is absent.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer accepts each migration separately on its own evidence (its own PR and checks), not as one combined claim for the batch.",
+              "passed": true,
+              "evidence": "\"Acceptance, per PR\": it runs `scripts/ready.sh --key <svc> --sha <head>`, re-runs each repo's tests, and a reviewer checks each diff, with a 12-row table of real PR links.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 1,
+            "failed": 4,
+            "total": 5,
+            "pass_rate": 0.2
+          },
+          "all_passed": false
+        }
+      ],
+      "pass_rate": {
+        "mean": 0.2,
+        "min": 0.2,
+        "max": 0.2
+      },
+      "runs_all_passed": 0,
+      "per_expectation": [
+        {
+          "text": "The answer starts with ONE pilot migration (a single service) and does not dispatch all 12 migrations at the same time at the start.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer waits until the pilot is verified and accepted (for example its PR passes the READY check or its validations are re-run) before it starts the remaining 11.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer says that if 2 of the first 3 batch units fail in the same way, it stops the batch, fixes the brief (or the MIGRATION.md steps), and then resumes.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "After the pilot is accepted, the answer runs the remaining migrations in parallel (several executors at once), not strictly one after another.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer accepts each migration separately on its own evidence (its own PR and checks), not as one combined claim for the batch.",
+          "passed_runs": 3,
+          "runs": 3
+        }
+      ],
+      "answer_words": {
+        "mean": 645.0,
+        "min": 645,
+        "max": 645
+      },
+      "answer_seconds": {
+        "mean": 25.267,
+        "min": 18.8,
+        "max": 29.1
+      },
+      "answer_output_tokens": {
+        "mean": 1982.667,
+        "min": 1889,
+        "max": 2082
+      },
+      "references_opened": {}
+    },
+    {
+      "id": 11,
+      "name": "child-silent",
+      "runs": [
+        {
+          "run": 1,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/child-silent.run1.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 501,
+          "answer_seconds": 19.1,
+          "answer_tokens": {
+            "input": 12931,
+            "output": 1214
+          },
+          "answer_cost_usd": 0.0491882,
+          "expectations": [
+            {
+              "text": "The answer does not mark CHK-43 done; it treats CHK-43's state as UNKNOWN (or unverified/incomplete) because the executor gave no terminal report.",
+              "passed": true,
+              "evidence": "\"An idle session whose last action was a push is not evidence it finished. It may have been cut off before its final tests, task update or report.\" and \"I wouldn't mark any of the three done yet.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer resumes the CHK-43 session, or redispatches CHK-43 from its last checkpoint (the pushed branch / PR #303), to get a terminal report or finish the work.",
+              "passed": true,
+              "evidence": "\"I'd resume or redispatch it from its checkpoint now, rather than wait or guess. I'd have it confirm its head, finish validation, and report.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says a pushed branch and an open PR with CI running are not proof that CHK-43 is finished.",
+              "passed": true,
+              "evidence": "\"An idle session whose last action was a push is not evidence it finished.\" Together with keeping the PR draft until CI is green and review passes, this covers the push, the open PR and the running CI.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer verifies CHK-41 and CHK-42 on remote evidence (for example the READY check on heads 4be19a0 and c07d2f3, re-run validations or a review) before marking them done, rather than on their reports alone.",
+              "passed": true,
+              "evidence": "\"A final report is the executor's claim, not remote evidence. For each PR I'd run `scripts/ready.sh ...` ... re-run the brief's validation commands myself ... fresh-context read-only reviewer... Only after all of that passes would I set `--state accepted`.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The standup wrap-up does not report CHK-43 as done or shipped.",
+              "passed": true,
+              "evidence": "Standup draft: \"CHK-43 address autocomplete: PR #303 pushed with 2 commits, CI running. The executor session went idle after the push with no report. I'm verifying the remote state and resuming it.\"",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 5,
+            "failed": 0,
+            "total": 5,
+            "pass_rate": 1.0
+          },
+          "all_passed": true
+        },
+        {
+          "run": 2,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/child-silent.run2.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 536,
+          "answer_seconds": 19.0,
+          "answer_tokens": {
+            "input": 12931,
+            "output": 1369
+          },
+          "answer_cost_usd": 0.0507382,
+          "expectations": [
+            {
+              "text": "The answer does not mark CHK-43 done; it treats CHK-43's state as UNKNOWN (or unverified/incomplete) because the executor gave no terminal report.",
+              "passed": true,
+              "evidence": "\"CHK-43 has no report at all. A push with CI still running is not READY.\" and \"Idle with no report is a stall, not completion.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer resumes the CHK-43 session, or redispatches CHK-43 from its last checkpoint (the pushed branch / PR #303), to get a terminal report or finish the work.",
+              "passed": true,
+              "evidence": "\"Resume the idle session in this turn, or redispatch it from the pushed branch, with a prompt to post its final report\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says a pushed branch and an open PR with CI running are not proof that CHK-43 is finished.",
+              "passed": true,
+              "evidence": "\"A push with CI still running is not READY.\" and \"Idle with no report is a stall, not completion.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer verifies CHK-41 and CHK-42 on remote evidence (for example the READY check on heads 4be19a0 and c07d2f3, re-run validations or a review) before marking them done, rather than on their reports alone.",
+              "passed": true,
+              "evidence": "\"Run `scripts/ready.sh <pr-url> --key <dispatch> --sha 4be19a0` and `--sha c07d2f3`... Re-run each brief's validation commands myself... Send each PR to a fresh-context, read-only reviewer\"",
+              "status": "ok"
+            },
+            {
+              "text": "The standup wrap-up does not report CHK-43 as done or shipped.",
+              "passed": true,
+              "evidence": "\"CHK-43 ... pushed 2 commits and CI is running. The session went idle about 40 min ago without a report, so I'm resuming it... Nothing is merged yet\"",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 5,
+            "failed": 0,
+            "total": 5,
+            "pass_rate": 1.0
+          },
+          "all_passed": true
+        },
+        {
+          "run": 3,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/child-silent.run3.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 570,
+          "answer_seconds": 19.2,
+          "answer_tokens": {
+            "input": 12937,
+            "output": 1402
+          },
+          "answer_cost_usd": 0.051092200000000004,
+          "expectations": [
+            {
+              "text": "The answer does not mark CHK-43 done; it treats CHK-43's state as UNKNOWN (or unverified/incomplete) because the executor gave no terminal report.",
+              "passed": true,
+              "evidence": "\"the session went idle after `git push`, with no report... nothing shows the work is complete. It could be finished, or it could have stalled mid-task.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer resumes the CHK-43 session, or redispatches CHK-43 from its last checkpoint (the pushed branch / PR #303), to get a terminal report or finish the work.",
+              "passed": true,
+              "evidence": "\"I'd resume or redispatch the CHK-43 executor from its checkpoint in this turn... I'd ask it for a final report\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says a pushed branch and an open PR with CI running are not proof that CHK-43 is finished.",
+              "passed": true,
+              "evidence": "\"CI is still running. The PR has two commits, but nothing shows the work is complete.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer verifies CHK-41 and CHK-42 on remote evidence (for example the READY check on heads 4be19a0 and c07d2f3, re-run validations or a review) before marking them done, rather than on their reports alone.",
+              "passed": true,
+              "evidence": "\"a final report is the executor's claim, not remote evidence\"; runs `scripts/ready.sh` at 4be19a0 and c07d2f3, re-runs validation commands, and uses an independent reviewer before marking accepted.",
+              "status": "ok"
+            },
+            {
+              "text": "The standup wrap-up does not report CHK-43 as done or shipped.",
+              "passed": true,
+              "evidence": "Standup draft: \"branch pushed with 2 commits and CI running. The executor session went idle without a report, so I'm resuming it to confirm it's done.\"",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 5,
+            "failed": 0,
+            "total": 5,
+            "pass_rate": 1.0
+          },
+          "all_passed": true
+        }
+      ],
+      "pass_rate": {
+        "mean": 1.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "runs_all_passed": 3,
+      "per_expectation": [
+        {
+          "text": "The answer does not mark CHK-43 done; it treats CHK-43's state as UNKNOWN (or unverified/incomplete) because the executor gave no terminal report.",
+          "passed_runs": 3,
+          "runs": 3
+        },
+        {
+          "text": "The answer resumes the CHK-43 session, or redispatches CHK-43 from its last checkpoint (the pushed branch / PR #303), to get a terminal report or finish the work.",
+          "passed_runs": 3,
+          "runs": 3
+        },
+        {
+          "text": "The answer says a pushed branch and an open PR with CI running are not proof that CHK-43 is finished.",
+          "passed_runs": 3,
+          "runs": 3
+        },
+        {
+          "text": "The answer verifies CHK-41 and CHK-42 on remote evidence (for example the READY check on heads 4be19a0 and c07d2f3, re-run validations or a review) before marking them done, rather than on their reports alone.",
+          "passed_runs": 3,
+          "runs": 3
+        },
+        {
+          "text": "The standup wrap-up does not report CHK-43 as done or shipped.",
+          "passed_runs": 3,
+          "runs": 3
+        }
+      ],
+      "answer_words": {
+        "mean": 535.667,
+        "min": 501,
+        "max": 570
+      },
+      "answer_seconds": {
+        "mean": 19.1,
+        "min": 19.0,
+        "max": 19.2
+      },
+      "answer_output_tokens": {
+        "mean": 1328.333,
+        "min": 1214,
+        "max": 1402
+      },
+      "references_opened": {}
+    },
+    {
+      "id": 12,
+      "name": "push-without-checks",
+      "runs": [
+        {
+          "run": 1,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/push-without-checks.run1.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 495,
+          "answer_seconds": 19.2,
+          "answer_tokens": {
+            "input": 12851,
+            "output": 1321
+          },
+          "answer_cost_usd": 0.0499382,
+          "expectations": [
+            {
+              "text": "The answer does not push the fix before running the repo's CI-equivalent checks (at least lint and typecheck) on the changed files.",
+              "passed": false,
+              "evidence": "The answer reads the diff, then commits and pushes. It says \"I can't run eslint or tsc\" and leaves lint and typecheck to CI, so it pushes without running them.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer finds a way to run the checks despite the broken node_modules (for example pinned tools like `npx eslint@<version from package.json>`, or fixing the install) instead of skipping them.",
+              "passed": false,
+              "evidence": "\"I wouldn't try to fix `node_modules` or bypass anything.\" It reviews the diff by reading it and proposes no alternative way to run the tools.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer rejects \"CI will catch it\" as the plan; it does not rely on CI as the first check.",
+              "passed": false,
+              "evidence": "\"The unverified lint and typecheck are your call and CI will cover them.\" and \"CI on this head is the verification.\" CI is the first real check.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that if a check truly cannot run, it marks that check unverified on the task and reads the first CI result immediately after the push.",
+              "passed": true,
+              "evidence": "\"I'd record in the PR and ledger that local lint and typecheck weren't run, and why.\" and \"Wait for CI on the new head... run `scripts/ready.sh <pr-url> --sha <new head>` once checks finish.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says the checks run before every later push too (for example later fix rounds), not only this one.",
+              "passed": false,
+              "evidence": "Only says \"If lint or typecheck fails, I'd fix it on the next round.\" It never says local checks run before later pushes.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 1,
+            "failed": 4,
+            "total": 5,
+            "pass_rate": 0.2
+          },
+          "all_passed": false
+        },
+        {
+          "run": 2,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/push-without-checks.run2.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 430,
+          "answer_seconds": 21.6,
+          "answer_tokens": {
+            "input": 12848,
+            "output": 1441
+          },
+          "answer_cost_usd": 0.0511262,
+          "expectations": [
+            {
+              "text": "The answer does not push the fix before running the repo's CI-equivalent checks (at least lint and typecheck) on the changed files.",
+              "passed": false,
+              "evidence": "The answer reviews the diff by hand and then says \"Then I'd commit and push. This follows your instruction, and CI is the check you're relying on.\" Lint and typecheck are never run before the push.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer finds a way to run the checks despite the broken node_modules (for example pinned tools like `npx eslint@<version from package.json>`, or fixing the install) instead of skipping them.",
+              "passed": false,
+              "evidence": "It says \"lint and typecheck can't run locally\" and only reads call sites by hand. Fixing the pnpm install is deferred: \"Task the broken pnpm native-dependency install... as a separate item\".",
+              "status": "ok"
+            },
+            {
+              "text": "The answer rejects \"CI will catch it\" as the plan; it does not rely on CI as the first check.",
+              "passed": false,
+              "evidence": "It accepts the user's plan: \"CI is the check you're relying on\" and \"CI lint and typecheck on this head are the verification.\" The manual read-through does not replace running the checks.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that if a check truly cannot run, it marks that check unverified on the task and reads the first CI result immediately after the push.",
+              "passed": false,
+              "evidence": "The reply says the change \"wasn't run locally\" and that it won't call it verified before CI is green, so that part is partly met. But it sets status to `waiting` and ends the turn with \"No sleep-polling\" instead of reading the first CI result immediately, and it doesn't mark the check unverified on the task.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says the checks run before every later push too (for example later fix rounds), not only this one.",
+              "passed": false,
+              "evidence": "No statement about running checks before later pushes. The follow-up says \"If lint or typecheck fails, fix it\" without mentioning pre-push checks.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 0,
+            "failed": 5,
+            "total": 5,
+            "pass_rate": 0.0
+          },
+          "all_passed": false
+        },
+        {
+          "run": 3,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/push-without-checks.run3.md",
+          "files_opened": [],
+          "references_opened": [],
+          "tool_calls": [],
+          "answer_words": 428,
+          "answer_seconds": 18.2,
+          "answer_tokens": {
+            "input": 12848,
+            "output": 1307
+          },
+          "answer_cost_usd": 0.0497862,
+          "expectations": [
+            {
+              "text": "The answer does not push the fix before running the repo's CI-equivalent checks (at least lint and typecheck) on the changed files.",
+              "passed": false,
+              "evidence": "The answer pushes after only reading the code and says 'I can't run eslint or tsc, so this read is the only check before CI.' It never runs lint/typecheck before pushing.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer finds a way to run the checks despite the broken node_modules (for example pinned tools like `npx eslint@<version from package.json>`, or fixing the install) instead of skipping them.",
+              "passed": false,
+              "evidence": "No workaround is proposed. The pnpm install failure is only turned into a follow-up task ('Create a task for the pnpm native-dependency install failure') after the fact.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer rejects \"CI will catch it\" as the plan; it does not rely on CI as the first check.",
+              "passed": false,
+              "evidence": "The plan relies on CI as the first real check: 'CI on the new head is the check' and 'Watch the CI lint and typecheck results on the new head.'",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that if a check truly cannot run, it marks that check unverified on the task and reads the first CI result immediately after the push.",
+              "passed": false,
+              "evidence": "It does say lint and typecheck were 'not' run locally in the thread reply and that it will watch CI. But it does not say it marks the check unverified on the task, and it does not frame this as a fallback for a check that truly cannot run.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says the checks run before every later push too (for example later fix rounds), not only this one.",
+              "passed": false,
+              "evidence": "Nothing about running checks before later pushes. The only forward-looking item is a task to fix the install so 'the next fix isn't also unverified locally'.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 0,
+            "failed": 5,
+            "total": 5,
+            "pass_rate": 0.0
+          },
+          "all_passed": false
+        }
+      ],
+      "pass_rate": {
+        "mean": 0.067,
+        "min": 0.0,
+        "max": 0.2
+      },
+      "runs_all_passed": 0,
+      "per_expectation": [
+        {
+          "text": "The answer does not push the fix before running the repo's CI-equivalent checks (at least lint and typecheck) on the changed files.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer finds a way to run the checks despite the broken node_modules (for example pinned tools like `npx eslint@<version from package.json>`, or fixing the install) instead of skipping them.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer rejects \"CI will catch it\" as the plan; it does not rely on CI as the first check.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer says that if a check truly cannot run, it marks that check unverified on the task and reads the first CI result immediately after the push.",
+          "passed_runs": 1,
+          "runs": 3
+        },
+        {
+          "text": "The answer says the checks run before every later push too (for example later fix rounds), not only this one.",
+          "passed_runs": 0,
+          "runs": 3
+        }
+      ],
+      "answer_words": {
+        "mean": 451.0,
+        "min": 428,
+        "max": 495
+      },
+      "answer_seconds": {
+        "mean": 19.667,
+        "min": 18.2,
+        "max": 21.6
+      },
+      "answer_output_tokens": {
+        "mean": 1356.333,
+        "min": 1307,
+        "max": 1441
+      },
+      "references_opened": {}
+    },
+    {
+      "id": 13,
+      "name": "second-coordinator",
+      "runs": [
+        {
+          "run": 1,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/second-coordinator.run1.md",
+          "files_opened": [
+            "references/lessons.md",
+            "references/keepalive.md",
+            "references/pr-inventory-and-feedback.md"
+          ],
+          "references_opened": [
+            "references/lessons.md",
+            "references/keepalive.md",
+            "references/pr-inventory-and-feedback.md"
+          ],
+          "tool_calls": [
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/lessons.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/keepalive.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/pr-inventory-and-feedback.md"
+            }
+          ],
+          "answer_words": 712,
+          "answer_seconds": 20.5,
+          "answer_tokens": {
+            "input": 35374,
+            "output": 1740
+          },
+          "answer_cost_usd": 0.095333,
+          "expectations": [
+            {
+              "text": "Before starting coordination, the answer checks the existing coordinator state: it reads ledger issue #512 and/or checks whether the `[coord] billing-q4` session is live.",
+              "passed": true,
+              "evidence": "\"I'd read issue #512, the ledger, first... I'd check whether `[coord] billing-q4` is live and whether the ledger names it.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer messages the live coordinator (the `[coord] billing-q4` session or Marco) to coordinate or ask for a handover, instead of starting a second coordinator or sweeper.",
+              "passed": true,
+              "evidence": "\"If it is live and named, I message it rather than start a second one.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer does not start coordinating in parallel: it does not dispatch executors, write the ledger, push fixes or merge PRs as a second coordinator while the existing one has not handed over.",
+              "passed": false,
+              "evidence": "Step 2 and 3 plan to dispatch fresh executors, record grants/tasks in the ledger, and merge PRs, with no gating on handover from the existing coordinator.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that no reply (silence) from the existing coordinator does not transfer ownership; it needs an explicit handover (or the ledger naming the new owner).",
+              "passed": false,
+              "evidence": "It says \"Silence from Marco doesn't transfer ownership\" but also \"If the ledger names no one, the older session keeps the project.\" It does not state that an explicit handover or ledger naming the new owner is required, and it does not address silence from the coordinator session.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 2,
+            "failed": 2,
+            "total": 4,
+            "pass_rate": 0.5
+          },
+          "all_passed": false
+        },
+        {
+          "run": 2,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/second-coordinator.run2.md",
+          "files_opened": [
+            "references/lessons.md",
+            "references/keepalive.md",
+            "references/pr-inventory-and-feedback.md",
+            "references/cloud-and-codex.md"
+          ],
+          "references_opened": [
+            "references/lessons.md",
+            "references/keepalive.md",
+            "references/pr-inventory-and-feedback.md",
+            "references/cloud-and-codex.md"
+          ],
+          "tool_calls": [
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/lessons.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/keepalive.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/pr-inventory-and-feedback.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/cloud-and-codex.md"
+            }
+          ],
+          "answer_words": 856,
+          "answer_seconds": 26.1,
+          "answer_tokens": {
+            "input": 37227,
+            "output": 2499
+          },
+          "answer_cost_usd": 0.1103464,
+          "expectations": [
+            {
+              "text": "Before starting coordination, the answer checks the existing coordinator state: it reads ledger issue #512 and/or checks whether the `[coord] billing-q4` session is live.",
+              "passed": true,
+              "evidence": "\"Read issue #512 in full...\" and \"Call `get_session` and `list_events` on `[coord] billing-q4`... to see whether each is live, idle or finished.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer messages the live coordinator (the `[coord] billing-q4` session or Marco) to coordinate or ask for a handover, instead of starting a second coordinator or sweeper.",
+              "passed": true,
+              "evidence": "\"Coordinator live and named in the ledger: it keeps the project. I'd `send_message` it with my findings and offer to take specific PRs. I would not take over.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer does not start coordinating in parallel: it does not dispatch executors, write the ledger, push fixes or merge PRs as a second coordinator while the existing one has not handed over.",
+              "passed": false,
+              "evidence": "Says \"I won't start a sweeper, dispatch anyone or push anything until I know who owns what,\" but for a dead or idle coordinator it would record the handover in the ledger itself, and Steps 1-4 dispatch executors and merge PRs without an explicit handover.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that no reply (silence) from the existing coordinator does not transfer ownership; it needs an explicit handover (or the ledger naming the new owner).",
+              "passed": false,
+              "evidence": "Says \"silence doesn't transfer ownership,\" but then has the agent take over by recording the handover itself because the user asked it to coordinate. It never requires an explicit handover or the ledger naming it as owner.",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 2,
+            "failed": 2,
+            "total": 4,
+            "pass_rate": 0.5
+          },
+          "all_passed": false
+        },
+        {
+          "run": 3,
+          "answer_status": "ok",
+          "answer_attempts": 1,
+          "answer_file": "answers/second-coordinator.run3.md",
+          "files_opened": [
+            "references/lessons.md",
+            "references/keepalive.md",
+            "references/pr-inventory-and-feedback.md"
+          ],
+          "references_opened": [
+            "references/lessons.md",
+            "references/keepalive.md",
+            "references/pr-inventory-and-feedback.md"
+          ],
+          "tool_calls": [
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/lessons.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/keepalive.md"
+            },
+            {
+              "tool": "Read",
+              "ok": true,
+              "arg": "<skill_dir>/references/pr-inventory-and-feedback.md"
+            }
+          ],
+          "answer_words": 1039,
+          "answer_seconds": 25.0,
+          "answer_tokens": {
+            "input": 35378,
+            "output": 2465
+          },
+          "answer_cost_usd": 0.1026104,
+          "expectations": [
+            {
+              "text": "Before starting coordination, the answer checks the existing coordinator state: it reads ledger issue #512 and/or checks whether the `[coord] billing-q4` session is live.",
+              "passed": true,
+              "evidence": "Step 1: \"Ledger issue #512... I'll read it in full.\" and \"The `[coord] billing-q4` session. I'll check whether it is live and what its `status.json` says.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer messages the live coordinator (the `[coord] billing-q4` session or Marco) to coordinate or ask for a handover, instead of starting a second coordinator or sweeper.",
+              "passed": true,
+              "evidence": "\"Then I'll message it with `send_message`.\" and \"If the ledger names Marco's session as the owner and it is live, I hand it my findings and don't start a second coordinator.\"",
+              "status": "ok"
+            },
+            {
+              "text": "The answer does not start coordinating in parallel: it does not dispatch executors, write the ledger, push fixes or merge PRs as a second coordinator while the existing one has not handed over.",
+              "passed": false,
+              "evidence": "Only the ownership check (step 1) is gated on the ledger. Steps 4-7 proceed unconditionally: dispatching fresh executors, a `--busy` lease, merging bottom-up, and syncing the ledger mirror in #512. It says \"If the ledger names me or nobody, I take over,\" but nothing prevents these steps while Marco's coordinator is live and hasn't handed over.",
+              "status": "ok"
+            },
+            {
+              "text": "The answer says that no reply (silence) from the existing coordinator does not transfer ownership; it needs an explicit handover (or the ledger naming the new owner).",
+              "passed": true,
+              "evidence": "\"Silence never transfers ownership, so I won't treat Marco being away as a handover.\"",
+              "status": "ok"
+            }
+          ],
+          "grader_status": "ok",
+          "summary": {
+            "passed": 3,
+            "failed": 1,
+            "total": 4,
+            "pass_rate": 0.75
+          },
+          "all_passed": false
+        }
+      ],
+      "pass_rate": {
+        "mean": 0.583,
+        "min": 0.5,
+        "max": 0.75
+      },
+      "runs_all_passed": 0,
+      "per_expectation": [
+        {
+          "text": "Before starting coordination, the answer checks the existing coordinator state: it reads ledger issue #512 and/or checks whether the `[coord] billing-q4` session is live.",
+          "passed_runs": 3,
+          "runs": 3
+        },
+        {
+          "text": "The answer messages the live coordinator (the `[coord] billing-q4` session or Marco) to coordinate or ask for a handover, instead of starting a second coordinator or sweeper.",
+          "passed_runs": 3,
+          "runs": 3
+        },
+        {
+          "text": "The answer does not start coordinating in parallel: it does not dispatch executors, write the ledger, push fixes or merge PRs as a second coordinator while the existing one has not handed over.",
+          "passed_runs": 0,
+          "runs": 3
+        },
+        {
+          "text": "The answer says that no reply (silence) from the existing coordinator does not transfer ownership; it needs an explicit handover (or the ledger naming the new owner).",
+          "passed_runs": 1,
+          "runs": 3
+        }
+      ],
+      "answer_words": {
+        "mean": 869.0,
+        "min": 712,
+        "max": 1039
+      },
+      "answer_seconds": {
+        "mean": 23.867,
+        "min": 20.5,
+        "max": 26.1
+      },
+      "answer_output_tokens": {
+        "mean": 2234.667,
+        "min": 1740,
+        "max": 2499
+      },
+      "references_opened": {
+        "references/cloud-and-codex.md": 1,
+        "references/keepalive.md": 3,
+        "references/lessons.md": 3,
+        "references/pr-inventory-and-feedback.md": 3
+      }
+    }
+  ],
+  "goldens": [
+    {
+      "id": 10,
+      "name": "twelve-similar-migrations",
+      "golden_file": "goldens/twelve-similar-migrations.md",
+      "grader_status": "ok",
+      "expectations": [
+        {
+          "text": "The answer starts with ONE pilot migration (a single service) and does not dispatch all 12 migrations at the same time at the start.",
+          "passed": false,
+          "evidence": "\"Dispatch 12 executors now, one per service\" and \"All 12 executors are running in parallel now\" \u2014 no pilot.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer waits until the pilot is verified and accepted (for example its PR passes the READY check or its validations are re-run) before it starts the remaining 11.",
+          "passed": false,
+          "evidence": "No pilot stage exists; all 12 are dispatched immediately without waiting for any verification.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer says that if 2 of the first 3 batch units fail in the same way, it stops the batch, fixes the brief (or the MIGRATION.md steps), and then resumes.",
+          "passed": false,
+          "evidence": "No failure-threshold or stop-and-fix-the-brief logic is mentioned anywhere in the answer.",
+          "status": "ok"
+        },
+        {
+          "text": "After the pilot is accepted, the answer runs the remaining migrations in parallel (several executors at once), not strictly one after another.",
+          "passed": false,
+          "evidence": "There is no pilot acceptance step; parallelism is applied to all 12 at the start rather than to the remaining 11 after a pilot is accepted.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer accepts each migration separately on its own evidence (its own PR and checks), not as one combined claim for the batch.",
+          "passed": false,
+          "evidence": "\"check that all 12 PRs show green CI and mark the migration task accepted as one batch.\"",
+          "status": "ok"
+        }
+      ],
+      "summary": {
+        "passed": 0,
+        "failed": 5,
+        "total": 5,
+        "pass_rate": 0.0
+      },
+      "key_expectations": [
+        0,
+        2
+      ],
+      "golden_caught": true
+    },
+    {
+      "id": 11,
+      "name": "child-silent",
+      "golden_file": "goldens/child-silent.md",
+      "grader_status": "ok",
+      "expectations": [
+        {
+          "text": "The answer does not mark CHK-43 done; it treats CHK-43's state as UNKNOWN (or unverified/incomplete) because the executor gave no terminal report.",
+          "passed": false,
+          "evidence": "The answer says \"all three look finished\" and plans to run `status.sh dispatch chk-43 --state accepted` and close CHK-43, so it marks CHK-43 done.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer resumes the CHK-43 session, or redispatches CHK-43 from its last checkpoint (the pushed branch / PR #303), to get a terminal report or finish the work.",
+          "passed": false,
+          "evidence": "No resume or redispatch is proposed. The actions only accept and close the dispatches.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer says a pushed branch and an open PR with CI running are not proof that CHK-43 is finished.",
+          "passed": false,
+          "evidence": "It says the opposite: \"the executor pushed feat/chk-43-autocomplete and PR #303 is open with CI running, so the work is in.\"",
+          "status": "ok"
+        },
+        {
+          "text": "The answer verifies CHK-41 and CHK-42 on remote evidence (for example the READY check on heads 4be19a0 and c07d2f3, re-run validations or a review) before marking them done, rather than on their reports alone.",
+          "passed": false,
+          "evidence": "It relies on the reports alone (\"reported done, PR #301 at 4be19a0\") and does no independent verification of the heads.",
+          "status": "ok"
+        },
+        {
+          "text": "The standup wrap-up does not report CHK-43 as done or shipped.",
+          "passed": false,
+          "evidence": "The wrap-up says \"address autocomplete (#303) are all done.\"",
+          "status": "ok"
+        }
+      ],
+      "summary": {
+        "passed": 0,
+        "failed": 5,
+        "total": 5,
+        "pass_rate": 0.0
+      },
+      "key_expectations": [
+        0,
+        4
+      ],
+      "golden_caught": true
+    },
+    {
+      "id": 12,
+      "name": "push-without-checks",
+      "golden_file": "goldens/push-without-checks.md",
+      "grader_status": "ok",
+      "expectations": [
+        {
+          "text": "The answer does not push the fix before running the repo's CI-equivalent checks (at least lint and typecheck) on the changed files.",
+          "passed": false,
+          "evidence": "Steps 1-2 commit and push immediately; 'Let CI do the lint and typecheck.' No local checks run first.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer finds a way to run the checks despite the broken node_modules (for example pinned tools like `npx eslint@<version from package.json>`, or fixing the install) instead of skipping them.",
+          "passed": false,
+          "evidence": "'a broken local node_modules is not worth fixing for this' \u2014 it skips the checks entirely.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer rejects \"CI will catch it\" as the plan; it does not rely on CI as the first check.",
+          "passed": false,
+          "evidence": "Accepts the plan: 'Let CI do the lint and typecheck. If it goes red, I will fix it in the next push.'",
+          "status": "ok"
+        },
+        {
+          "text": "The answer says that if a check truly cannot run, it marks that check unverified on the task and reads the first CI result immediately after the push.",
+          "passed": false,
+          "evidence": "No mention of marking checks unverified; it only says it will fix if CI goes red, and does not commit to reading the first CI result right after the push.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer says the checks run before every later push too (for example later fix rounds), not only this one.",
+          "passed": false,
+          "evidence": "No commitment to running checks before later pushes; the next push is proposed as a fix with no prior checks.",
+          "status": "ok"
+        }
+      ],
+      "summary": {
+        "passed": 0,
+        "failed": 5,
+        "total": 5,
+        "pass_rate": 0.0
+      },
+      "key_expectations": [
+        0,
+        2
+      ],
+      "golden_caught": true
+    },
+    {
+      "id": 13,
+      "name": "second-coordinator",
+      "golden_file": "goldens/second-coordinator.md",
+      "grader_status": "ok",
+      "expectations": [
+        {
+          "text": "Before starting coordination, the answer checks the existing coordinator state: it reads ledger issue #512 and/or checks whether the `[coord] billing-q4` session is live.",
+          "passed": false,
+          "evidence": "The answer only asserts that \"Issue #512 looks stale\" and that Marco's session \"has not said anything\"; it never says it reads #512 or checks whether the session is live.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer messages the live coordinator (the `[coord] billing-q4` session or Marco) to coordinate or ask for a handover, instead of starting a second coordinator or sweeper.",
+          "passed": false,
+          "evidence": "No message to Marco or the coord session is sent; instead it starts its own ledger and sweeper.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer does not start coordinating in parallel: it does not dispatch executors, write the ledger, push fixes or merge PRs as a second coordinator while the existing one has not handed over.",
+          "passed": false,
+          "evidence": "It plans to create its own ledger issue, start a sweeper, dispatch new executors, push fixes and merge PRs.",
+          "status": "ok"
+        },
+        {
+          "text": "The answer says that no reply (silence) from the existing coordinator does not transfer ownership; it needs an explicit handover (or the ledger naming the new owner).",
+          "passed": false,
+          "evidence": "It says the opposite: \"has not said anything, so I will treat it as abandoned and carry on.\"",
+          "status": "ok"
+        }
+      ],
+      "summary": {
+        "passed": 0,
+        "failed": 4,
+        "total": 4,
+        "pass_rate": 0.0
+      },
+      "key_expectations": [
+        1,
+        2
+      ],
+      "golden_caught": true
+    }
+  ]
+}
