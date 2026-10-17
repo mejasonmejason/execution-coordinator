@@ -32,8 +32,8 @@ These complement the fan-out rules in SKILL.md, which hold the pilot-then-batch 
 Run these from the coordinator repo:
 
 ```bash
-scripts/status.sh dispatch <key> --worktree W --paths "a/**,b/**" [--run-id R] [--pr URL]
-scripts/status.sh dispatch <key> --state awaiting-acceptance --pr <url>   # on reported completion
+bash scripts/status.sh dispatch <key> --worktree W --paths "a/**,b/**" [--run-id R] [--pr URL]
+bash scripts/status.sh dispatch <key> --state awaiting-acceptance --pr <url>   # on reported completion
 ```
 
 The first form records the branch and the worktree `HEAD` as `base_sha`. `ready.sh --key` reads the PR, owned paths and base from this record, so set `--pr` before acceptance.
