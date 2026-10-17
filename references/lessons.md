@@ -22,3 +22,4 @@ Every lesson that code can check needs an offline, fixture-backed `gh` case in `
 - Claude Code cloud sessions refuse GraphQL and non-repo API paths. Before the REST fallback existed, `ready.sh` blocked every merge there. Use the cloud REST forms.
 - Read the exit code of `ready.sh` itself. Never pipe it into another command before a merge: in `ready.sh … | grep … && merge`, the `&&` tests grep, not READY. That shape merged a NOT READY PR (#41).
 - When a review bot is out of quota, its status summary stays on an older commit, so READY blocks. Replace that review with a fresh-context review, then merge with a logged `COORD_READY_OVERRIDE` that names the review. Never get past READY any other way.
+- Run the bundled scripts with `bash <path>`. A claude.ai synced install drops the execute bits, so a direct call exits 126; `ready.sh` then failed closed on every PR (#3). `ready.sh` and the merge gate call their siblings through `bash` for the same reason.

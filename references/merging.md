@@ -22,7 +22,7 @@ You must read this before you run `scripts/ready.sh` or the merge gate, chase re
 
 ## What `scripts/ready.sh` checks
 
-`scripts/ready.sh <pr-url> --sha <reported head> [--key <dispatch>] [--paths "a/**,b"]` uses REST throughout; its owed-reply audit falls back to REST where GraphQL is refused.
+`bash scripts/ready.sh <pr-url> --sha <reported head> [--key <dispatch>] [--paths "a/**,b"]` uses REST throughout; its owed-reply audit falls back to REST where GraphQL is refused.
 
 It blocks on:
 

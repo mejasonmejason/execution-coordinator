@@ -153,7 +153,7 @@ case "${1:-}" in
       echo "status.sh: could not build the dispatch record: $rec" >&2; exit 2; }
     if [ "$(jq -r .state <<<"$rec")" = "accepted" ] && [ "$(jq -r '.state // ""' <<<"$pj")" != "accepted" ]; then
       refuse() { echo "status.sh: refusing: dispatch \"$key\" $*" >&2; exit 4; }
-      rerun="; run scripts/ready.sh --key $key first"
+      rerun="; run bash scripts/ready.sh --key $key first"
       why=$(jq -r --arg k "$key" --arg gh "${GH_HOST:-github.com}" "$lib"'
         .ready as $v
         | if ($v | type) == "object" and $v.in_progress == true then "has a READY check that did not finish"
