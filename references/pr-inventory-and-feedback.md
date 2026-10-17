@@ -100,7 +100,7 @@ Fix verified defects and explicit requirements. Never dismiss human comments thi
 
 ## Audit comments
 
-Run `scripts/pr-threads.sh <pr-url> [...]` before PR reports, READY, handoffs and any claim that a comment is answered. Do not rely on memory, because threads change while you work.
+Run `bash scripts/pr-threads.sh <pr-url> [...]` before PR reports, READY, handoffs and any claim that a comment is answered. Do not rely on memory, because threads change while you work.
 
 | Row | Meaning | What to do |
 |---|---|---|

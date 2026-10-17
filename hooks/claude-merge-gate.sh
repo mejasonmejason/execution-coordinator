@@ -3,7 +3,7 @@
 # Claude Code: add to .claude/settings.json (project) or ~/.claude/settings.json (user).
 # Codex: add to .codex/hooks.json (project; the project must be trusted) or ~/.codex/hooks.json (user).
 #   { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command",
-#       "command": "/path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] } ] } }
+#       "command": "bash /path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] } ] } }
 # On `gh pr merge` (not --disable-auto) or `gh api .../pulls/N/merge` or `.../pulls/N/merge-async`, it resolves the PR and runs scripts/ready.sh
 # on the current head (--allow-pending for --auto). Exit 0 allows; exit 2 blocks with the reason on stderr.
 # gh flags before `pr` or `merge` (-R/--repo, --hostname) are understood; any other flag there fails closed.

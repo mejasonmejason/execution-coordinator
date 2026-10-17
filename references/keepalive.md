@@ -118,14 +118,14 @@ Put this in `.claude/settings.json` (project) or `~/.claude/settings.json` (user
   "hooks": {
     "SessionStart": [
       { "matcher": "startup|resume|clear|compact",
-        "hooks": [ { "type": "command", "command": "/path/to/execution-coordinator/hooks/session-start.sh" } ] }
+        "hooks": [ { "type": "command", "command": "bash /path/to/execution-coordinator/hooks/session-start.sh" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "/path/to/execution-coordinator/hooks/claude-stop-hook.sh" } ] }
+      { "hooks": [ { "type": "command", "command": "bash /path/to/execution-coordinator/hooks/claude-stop-hook.sh" } ] }
     ],
     "PreToolUse": [
       { "matcher": "Bash",
-        "hooks": [ { "type": "command", "command": "/path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] }
+        "hooks": [ { "type": "command", "command": "bash /path/to/execution-coordinator/hooks/claude-merge-gate.sh" } ] }
     ]
   }
 }
@@ -139,8 +139,8 @@ A cloud session keeps no home folder, and the skill's path differs between machi
 
 ```bash
 #!/usr/bin/env bash
-# Runs one execution-coordinator hook (session-start or stop) from wherever the skill is installed.
-# Usage, from .claude/settings.json or .codex/hooks.json: coordinator.sh <session-start|stop>
+# Runs one execution-coordinator hook (session-start, stop or the merge gate) from wherever the skill is installed.
+# Usage, from .claude/settings.json or .codex/hooks.json: coordinator.sh <session-start|stop|gate>
 # The hook reads the harness JSON on stdin; this script passes stdin through untouched.
 # Search order: $COORD_SKILL_DIR, this repo if it is the skill itself, ~/.claude/skills,
 # claude.ai synced skills (cloud sessions), ~/.agents/skills (Codex). The first copy that ships the
@@ -150,6 +150,7 @@ set -u
 case "${1:-}" in
   session-start) file=session-start.sh ;;
   stop) file=claude-stop-hook.sh ;;
+  gate) file=claude-merge-gate.sh ;;
   *) cat >/dev/null; exit 0 ;;
 esac
 root=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -162,7 +163,7 @@ cat >/dev/null
 exit 0
 ```
 
-Then point both harnesses at it. In `.claude/settings.json` use `"$CLAUDE_PROJECT_DIR"/.claude/hooks/coordinator.sh session-start` (matcher `startup|resume|clear|compact`) and `... coordinator.sh stop`. In `.codex/hooks.json` use `bash "$(git rev-parse --show-toplevel)/.claude/hooks/coordinator.sh" session-start` and `... stop`. Add the merge gate the same way only if the repo's merge rules should require `ready.sh`, because it blocks every `gh pr merge` that fails READY.
+Then point both harnesses at it. In `.claude/settings.json` use `"$CLAUDE_PROJECT_DIR"/.claude/hooks/coordinator.sh session-start` (matcher `startup|resume|clear|compact`) and `... coordinator.sh stop`. In `.codex/hooks.json` use `bash "$(git rev-parse --show-toplevel)/.claude/hooks/coordinator.sh" session-start` and `... stop`. Add the merge gate only if the repo's merge rules should require `ready.sh`, because it blocks every `gh pr merge` that fails READY. Use a `PreToolUse` entry with matcher `Bash` and the command `... coordinator.sh gate`. With no copy of the skill installed, the resolver exits 0 and the gate allows every merge, so install the skill wherever the gate must hold.
 
 ## Quiet hours
 

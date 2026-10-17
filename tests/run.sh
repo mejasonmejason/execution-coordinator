@@ -729,13 +729,20 @@ STUB_PRVIEW=1 g "gh pr merge 7 -R o/r --squash --body 'x y'" "$R"; t $? 0 "gate:
 g 'COORD_READY_OVERRIDE="check misread, verified green" gh pr merge https://github.com/o/r/pull/1 --squash' "$R"; t $? 0 "gate: override allowed"
 grep -q "check misread, verified green" "$R/.coordinator/overrides.log"; t $? 0 "gate: override logged"
 # Issue #3: a synced install drops the execute bits (every file 0644). ready.sh and the gate must still run.
-NX=$(mktemp -d); cp -r "$S/scripts" "$S/hooks" "$NX/"; find "$NX" -type f -exec chmod 644 {} +
+NX=$(mktemp -d); cp -r "$S/scripts" "$S/hooks" "$S/SKILL.md" "$NX/"; find "$NX" -type f -exec chmod 644 {} +
 fixtures; echo '[]' > "$STUB_DIR/files.json"
 out=$(bash "$NX/scripts/ready.sh" "$U" --paths "$ALL" 2>&1); t $? 0 "nox: ready.sh is READY from a copy with no execute bits"
 hasnt "$out" "exit 126" "nox: ready.sh runs pr-threads.sh without its execute bit"
 jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{tool_input:{command:$c}, cwd:$d}' | bash "$NX/hooks/claude-merge-gate.sh" 2> "$BIN/gate.err"
 t $? 0 "nox: the gate runs ready.sh without its execute bit"
+# The per-repo resolver runs the gate too (`coordinator.sh gate`). It used to exit 0 on `gate`, so the gate allowed every merge.
+setj pr.json '.mergeable_state = "dirty"'
+jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{tool_input:{command:$c}, cwd:$d}' | COORD_SKILL_DIR="$NX" bash "$S/.claude/hooks/coordinator.sh" gate 2> "$BIN/gate.err"
+t $? 2 "nox: coordinator.sh gate blocks a NOT READY merge from a copy with no execute bits"
+has "$(cat "$BIN/gate.err")" "merge conflicts with base" "nox: coordinator.sh gate reached the READY check"
 rm -rf "$NX"
+# The documented hook commands run through bash: a direct path exits 126 on a synced install, and a 126 gate fails open.
+t "$(grep -c '"command": "/path' "$S/references/keepalive.md" "$S/hooks/claude-merge-gate.sh" | awk -F: '{n+=$2} END {print n}')" 0 "nox: no documented hook command runs a hook by direct path"
 # Issue #23: gh flags before `pr`/`merge` must not skip READY, and override text inside an argument is not an override.
 fixtures; echo '[]' > "$STUB_DIR/files.json"; setj pr.json '.mergeable_state = "dirty"'
 gr() { g "$1" "$R"; t $? 2 "gate: $2 is checked"; has "$(cat "$BIN/gate.err")" "merge conflicts with base" "gate: $2 reached READY"; }
