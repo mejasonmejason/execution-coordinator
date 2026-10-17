@@ -42,13 +42,13 @@ Set `GH_HOST` for GitHub Enterprise.
 Each session owns `<repo or worktree>/.coordinator/status.json`. `scripts/status.sh` keeps that file git-ignored.
 
 ```bash
-S=<path to this skill>/scripts/status.sh
-$S set active "<next concrete action>"            # work you can do now
-$S set waiting "<what you await>" --recheck 10    # only CI, review, or background runs remain
-$S set waiting "<fan-out>" --busy 90               # lease: hooks stand down for 90 min; --busy 0 clears
-$S set human-gate "<person>: <exact decision>"     # sole blocker is a person
-$S set done "<fence met evidence>"
-$S get
+S=<path to this skill>/scripts/status.sh   # run it with bash: a synced install can drop the execute bit
+bash "$S" set active "<next concrete action>"            # work you can do now
+bash "$S" set waiting "<what you await>" --recheck 10    # only CI, review, or background runs remain
+bash "$S" set waiting "<fan-out>" --busy 90               # lease: hooks stand down for 90 min; --busy 0 clears
+bash "$S" set human-gate "<person>: <exact decision>"     # sole blocker is a person
+bash "$S" set done "<fence met evidence>"
+bash "$S" get
 ```
 
 In a Claude Code cloud session, also mirror the status to the ledger and use the cloud session tools for later events, because the container and its status file end with the session. Install the hooks in the repo's `.claude/settings.json` there, because a cloud session loads only the settings in its checkout.

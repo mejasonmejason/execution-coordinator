@@ -170,7 +170,7 @@ jq -rs 'reduce .[] as $r ({}; if ($r.state | IN("COMMENTED", "PENDING")) then . 
   || unreadable "could not evaluate the reviews"
 
 # Owed replies and unsent drafts. Exit 3 from the audit fails closed.
-threads=$("$here/pr-threads.sh" "$url" 2>&1); trc=$?
+threads=$(bash "$here/pr-threads.sh" "$url" 2>&1); trc=$?  # bash: a synced install drops the execute bit (#3)
 owed=$(grep -E '^(ACTION|UNSENT)' <<<"$threads" | sed -E 's/^(ACTION|UNSENT) +/B reply owed: \1 /')
 if [ "$trc" -eq 0 ] || [ "$trc" -eq 1 ]; then
   [ -n "$owed" ] && echo "$owed" >> "$tmp/v"

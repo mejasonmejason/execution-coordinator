@@ -201,7 +201,7 @@ while IFS= read -r t; do
     continue
   fi
   flags=(); [ "$auto" = "true" ] && flags+=(--allow-pending)
-  out=$(cd "$cwd" && "$ready" "$url" ${flags[@]+"${flags[@]}"} 2>&1); rc=$?
+  out=$(cd "$cwd" && bash "$ready" "$url" ${flags[@]+"${flags[@]}"} 2>&1); rc=$?
   case "$rc" in
     0) ;;
     1) fails+="$out"$'\n';;
