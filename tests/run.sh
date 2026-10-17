@@ -736,8 +736,13 @@ hasnt "$out" "exit 126" "nox: ready.sh runs pr-threads.sh without its execute bi
 jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{tool_input:{command:$c}, cwd:$d}' | bash "$NX/hooks/claude-merge-gate.sh" 2> "$BIN/gate.err"
 t $? 0 "nox: the gate runs ready.sh without its execute bit"
 # The per-repo resolver runs the gate too (`coordinator.sh gate`). It used to exit 0 on `gate`, so the gate allowed every merge.
+# Test the copy users install: the code block in keepalive.md (.claude/ is export-ignored, so the release zip has no other).
+RES="$NX/coordinator.sh"
+awk '/^```bash$/{b=1;buf="";next} /^```$/{if(b&&buf~/coordinator.sh <session-start/){printf "%s",buf;exit} b=0;next} b{buf=buf $0 "\n"}' "$S/references/keepalive.md" > "$RES"
+t "$(head -1 "$RES")" "#!/usr/bin/env bash" "nox: keepalive.md has the resolver code block"
+if [ -f "$S/.claude/hooks/coordinator.sh" ]; then cmp -s "$RES" "$S/.claude/hooks/coordinator.sh"; t $? 0 "nox: .claude/hooks/coordinator.sh matches the keepalive.md copy"; fi
 setj pr.json '.mergeable_state = "dirty"'
-jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{tool_input:{command:$c}, cwd:$d}' | COORD_SKILL_DIR="$NX" bash "$S/.claude/hooks/coordinator.sh" gate 2> "$BIN/gate.err"
+jq -n --arg c "gh pr merge $U --squash" --arg d "$R" '{tool_input:{command:$c}, cwd:$d}' | COORD_SKILL_DIR="$NX" bash "$RES" gate 2> "$BIN/gate.err"
 t $? 2 "nox: coordinator.sh gate blocks a NOT READY merge from a copy with no execute bits"
 has "$(cat "$BIN/gate.err")" "merge conflicts with base" "nox: coordinator.sh gate reached the READY check"
 rm -rf "$NX"
