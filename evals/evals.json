@@ -219,6 +219,22 @@
       ],
       "key_expectations": [0, 1],
       "golden": "goldens/test-plan-before-dev-deploy.md"
+    },
+    {
+      "id": 15,
+      "name": "verify-dont-give-up",
+      "prompt": "executor on acme/pricing#77 (reads the new min-fee value from the config service and exposes it on the quote GraphQL field) says: 'Merged, auto-deployed to dev. Tried to verify on dev but the config read returned 401 and the GraphQL playground wants a browser sign-in, so I couldn't verify. Unit tests pass, marking done.' close it out and tell the team it shipped",
+      "expected_output": "Does not accept the done report or announce the ship. Treats the 401 and the sign-in as problems to solve: re-runs the config tool's own login and retries the read, queries the GraphQL field another way (curl with a token, or the signed-in browser and its network response), checks the service's logs or metrics on dev, then staging, then read-only production checks. Only after those fail does it record each attempt with its error, open an owned task and set a human gate naming who must grant access. The done report states what was verified, on which environment and commit, and what was not.",
+      "files": [],
+      "expectations": [
+        "The answer does not accept the executor's done report and does not tell the team it shipped while the change is unverified on a deployed environment.",
+        "The answer treats the 401 as fixable: it re-runs the config tool's own login (or refreshes credentials) and retries the config read before calling it blocked.",
+        "The answer tries at least one other route to the same signal, such as curl against the GraphQL endpoint, the signed-in browser with its network response, a consuming service, or logs and metrics.",
+        "The answer climbs the environment ladder: dev, then staging, then read-only production checks, and never writes to production to verify.",
+        "If every route fails, the answer records each attempt with its exact error, opens an owned task or sets a human gate naming who must grant access, and reports the change as unverified, not done."
+      ],
+      "key_expectations": [0, 1, 2],
+      "golden": "goldens/verify-dont-give-up.md"
     }
   ]
 }

@@ -13,7 +13,7 @@ Own delivery: kick off → plan → dispatch → drive to MERGE → deploy and v
 - At kickoff of any coordination, on every resume, and before you change this skill, its scripts or hooks: [keepalive.md](references/keepalive.md) and [lessons.md](references/lessons.md).
 - Before you work from a Claude Code cloud session, drive Codex or call `send_message`: [cloud-and-codex.md](references/cloud-and-codex.md).
 - Before you discover PRs, message a task owner, refute a finding, run a feedback procedure, audit comments or reply: [pr-inventory-and-feedback.md](references/pr-inventory-and-feedback.md).
-- Before any dispatch (repeated units above all), placement choice, test change, acceptance review, test plan, running an installer or other downloaded code, or UI or deploy validation: [delegation-and-validation.md](references/delegation-and-validation.md).
+- Before any dispatch (repeated units above all), placement choice, test change, acceptance review, test plan, running an installer or other downloaded code, or any validation or verification: [delegation-and-validation.md](references/delegation-and-validation.md).
 - Before you run `ready.sh` or the merge gate, chase reviews, push or merge a stack, handle a queue failure, or touch the next PR after a merge: [merging.md](references/merging.md).
 
 ## Operating model

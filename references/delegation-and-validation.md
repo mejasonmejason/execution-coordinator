@@ -137,6 +137,17 @@ For web work, run real browser or Playwright journeys. Label mocks as mocks. A m
 
 Fix every gap they find before deploying, or record it as an owned task with the risk it leaves. This adds no user gate. Skip it for changes with no live behavior (docs, tests, refactors proven equal by tests).
 
+**Verify on the real environment.** Unit tests and green CI prove the code matches its tests, not that the change works where it runs. For every live-behavior change, climb this ladder as far as access allows: a local run against real dependencies, then dev, then staging, then read-only checks in production (a GET, a query, a dashboard, a log search). Never write to production to verify. Deploying to dev and staging is routine work, not a user gate, unless a repo or ledger rule says otherwise. Drive the changed path through its real entry point (an HTTP or GraphQL request, the browser journey, a call from a consumer service, a config read) and compare the result with the pass signal in the test plan.
+
+**Do not give up on verification.** A failed attempt is a problem to solve, not a result. Before you write "could not verify":
+
+1. Re-run the tool's own login and retry. Expired credentials are the most common failure.
+2. Try a second route to the same signal: CLI, the API with curl, the browser, a service that consumes the change, logs or metrics.
+3. Try the next environment on the ladder.
+4. Ask a scout or advisor to find a route.
+
+Only after all four fail, record each attempt with its exact error, open an owned task, and set `human-gate` if a person must grant access. "Unverified" is a status to report, never a pass. Every done report for a live change states what was verified, on which environment and commit, and what was not. Reject an executor's done report that has no environment evidence, and put this ladder in every brief for a live change.
+
 **Deployment.**
 
 - Build the exact remote commit. Deploy changed services in dependency order.
