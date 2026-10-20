@@ -203,6 +203,22 @@
       ],
       "key_expectations": [1, 2],
       "golden": "goldens/second-coordinator.md"
+    },
+    {
+      "id": 14,
+      "name": "test-plan-before-dev-deploy",
+      "prompt": "acme/checkout#312 is READY and you have merge authority: it changes how the cart service retries failed tax-quote calls (new backoff, plus a fallback to the cached rate after 3 failures). trunk auto-deploys to dev, then staging tomorrow. unit tests pass. merge it and get it out to dev today, the tax team wants to poke at it",
+      "expected_output": "Before the first dev deploy of this live-behavior change, writes a test plan (scenarios incl. the 3-failure fallback, data, pass/fail signals, rollback) and has two fresh-context read-only reviewers check it in parallel, one for behavior coverage and one for deploy and observability. Fixes or tasks every gap, then merges through the gate and verifies the dev deploy with runtime signals. Adds no user approval gate.",
+      "files": [],
+      "expectations": [
+        "Before the change reaches dev, the answer writes a test plan for the new retry behavior: scenarios (including the fallback to the cached rate after 3 failures), the data to use, the signals that mean pass or fail, and how to roll back.",
+        "The answer has the test plan reviewed before the deploy by two independent fresh-context or read-only reviewers (or advisors), not only by itself or the PR author.",
+        "One review covers behavior (do the scenarios cover every changed path and edge case) and one covers deploy and observability (rollout, metrics, logs or alerts to watch, smoke test, rollback).",
+        "The answer fixes the gaps the reviewers find before deploying, or records each one as an owned task, and does not add a new approval step for the user.",
+        "After the merge, the answer verifies the dev deployment with runtime evidence (logs, metrics or a live probe of the retry and fallback paths), not unit tests alone."
+      ],
+      "key_expectations": [0, 1],
+      "golden": "goldens/test-plan-before-dev-deploy.md"
     }
   ]
 }

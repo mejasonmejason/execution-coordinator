@@ -1,6 +1,6 @@
 # Delegation, placement, acceptance review and validation
 
-You must read this before any dispatch (repeated units above all), before you record a dispatch, decide whether work runs locally or on a hosted agent, run heavy local work or downloaded code, change tests, write an acceptance review, or validate UI or deployments.
+You must read this before any dispatch (repeated units above all), before you record a dispatch, decide whether work runs locally or on a hosted agent, run heavy local work or downloaded code, change tests, write an acceptance review, write a test plan, or validate UI or deployments.
 
 ## Contents
 
@@ -129,6 +129,13 @@ SKILL.md forbids deleting, skipping, weakening or re-baselining tests or lint to
 For web work, run real browser or Playwright journeys. Label mocks as mocks. A mock never replaces a required real sign-in, because it cannot prove the real path works.
 
 **UI.** Write task scenarios from the diff. The executor's owner or an advisor reviews them; this adds no new user gate. Drive the real branch. If SSO is needed, set a `human-gate` naming who must sign in, and never expose credentials. Capture screenshots, console errors and failed requests. Screenshots alone do not prove success. Link the pass or fail evidence for each scenario. Turn reusable flows into tests. Test mobile widths for visual changes.
+
+**Test-plan council.** Before the first deploy of a live-behavior change to a shared environment (dev, staging, canary), write the test plan on the task: scenarios, data, the signals that mean pass or fail, and the rollback. Two fresh-context, read-only reviewers check it in parallel, because a plan reviewed after the deploy only explains the failure:
+
+- Behavior: do the scenarios cover every changed path in `base_sha..head`, the edge cases and real data, with a pass or fail signal for each?
+- Deploy and observability: are the rollout order, dependent services, metrics, logs and alerts to watch, smoke test and proven rollback named?
+
+Fix every gap they find before deploying, or record it as an owned task with the risk it leaves. This adds no user gate. Skip it for changes with no live behavior (docs, tests, refactors proven equal by tests).
 
 **Deployment.**
 
