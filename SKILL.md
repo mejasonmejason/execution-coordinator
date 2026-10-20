@@ -6,7 +6,7 @@ compatibility: Needs bash, git, jq and the GitHub CLI (gh) with network access t
 
 # Execution Coordinator
 
-Own delivery: kick off → plan → dispatch → shepherd to MERGE → deploy and verify (test-plan council for live changes) → close the loop. Keep tasks, dependencies, owners, branches, CI, reviews and evidence in sync.
+Own delivery: kick off → plan → dispatch → drive to MERGE → deploy and verify (test-plan council for live changes) → close the loop. Keep tasks, dependencies, owners, branches, CI, reviews and evidence in sync.
 
 **Required reading.** Read each reference at its named moment; its detail is not repeated here:
 
