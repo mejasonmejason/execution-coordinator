@@ -49,12 +49,15 @@ Override only a blocker you have verified is wrong; an unreadable result (exit 3
 
 ## Get reviews
 
-1. Request the code owners when CI is green.
-2. After 4 working hours without review, post one concise PR comment with the change, the risk and the evidence.
-3. After 1 working day, draft a chat nudge asking for approval. Chat to people is human-only, so name the target and await approval before it is sent.
-4. Record each nudge on the task.
+Request human review last, because reviewers pinged while the PR still changes start to mute it. Keep the PR in draft while iterating. Mark it ready and request reviewers only when everything else is done: acceptance review passed, every comment answered, required CI green, and the change verified in dev, and in staging when the repo deploys there before merge. A push that changes behavior after the request repeats that verification.
 
-If a reviewer is overdue or overloaded, ask another CODEOWNER. Assign other ready work during review waits, so executors do not idle.
+1. **Pick at least two reviewers, always,** even when the repo needs one approval, because one reviewer is a single point of delay. Each must be able to approve the changed paths: a CODEOWNERS entry for those paths (a team entry covers its members) or the repo's required-review rule. Rank the eligible people by who last changed or reviewed those files (`git log` and `git blame` on the changed lines, recent reviews on PRs that touched them). Skip anyone out of office. A top author who cannot approve those paths may be added as an extra, never in place of an approver, because their approval does not satisfy the gate. If only one person can approve, request them and record that.
+2. **Ask once, clearly.** With the request, post one PR comment that mentions the reviewers and gives the change, the risk, the evidence and what to look at.
+3. **Nudge on a schedule.** No review 24 hours after the request: nudge once, saying what changed since. After that, nudge once each working day. Send a nudge only while the PR is READY apart from approvals on its current head; otherwise fix that first.
+4. PR review requests and PR comments are part of driving the PR. Chat messages to reviewers follow the user's chat rule.
+5. Record each request and nudge on the task.
+
+If a reviewer is overdue, overloaded or out of office, ask another eligible approver. Assign other ready work during review waits, so executors do not idle.
 
 ## Stack invariants
 

@@ -61,7 +61,7 @@ At kickoff, read the repo rules (CLAUDE.md, AGENTS.md, a steward or babysit skil
 
 ## Completion fence and plan
 
-Write root-task criteria as observable results: code, tests, CI, threads, stack ancestry, merge, deployment, journeys, demos. Before dispatch, graph dependencies, parallel tasks and parent branches, and set milestone checks. Verify combined results and interfaces before dependent phases.
+Write root-task criteria as observable results: code, tests, CI, threads, stack ancestry, merge, deployment, journeys, demos. Before dispatch, graph dependencies, parallel tasks and parent branches, and time-box milestones (keepalive.md). Verify combined results and interfaces before dependent phases.
 
 Cite code claims as `path:line`. Reject or verify uncited claims before execution. Completion needs remote evidence, not local commits, tests or agent claims, because only remote state merges.
 
@@ -80,7 +80,7 @@ Running independent tasks in sequence is a defect: it wastes parallel time.
 3. **Never delete, skip, weaken or re-baseline tests or lint for green**, because green then proves nothing. Explain test changes in the PR.
 4. **Check before every push:** run the repo's CI-equivalent checks on the changed files with pinned tools. Fix a broken install; never skip for it. "CI will catch it" is not a plan, because each red push costs a CI round. A user's "just push" does not cancel it: state the cost, then check. If a check cannot run, push, but say the push is unverified, mark it on the task and read the first CI result at once.
 5. **Diagnose before retrying.** When CI is red, read the failing diagnostic before any rebase or rerun, because without the cause the failure repeats.
-6. **Review:** stack large changes, because one large PR cannot get a real review. Keep PRs draft until required CI is green. Acceptance review comes before human review.
+6. **Review:** stack large changes. Iterate in draft. Request human review last (merging.md): after acceptance, answered comments, green CI and verification.
 7. **Serialize merges** through a queue or one at a time, because parallel merges hide which one broke trunk. Isolate a failed batch by bisection.
 8. Read the ledger, progress notes and git log each iteration. End with a commit or progress line. Save the plan before the context fills.
 9. Delegate feature code. Do coordination and small fixes yourself.

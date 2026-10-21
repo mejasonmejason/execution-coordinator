@@ -42,7 +42,7 @@
     {
       "id": 3,
       "name": "three-independent-tasks-fanout",
-      "prompt": "three things for today in acme/web (pnpm monorepo, main is green):\n1. bump eslint to v9 in packages/lint-config and fix whatever breaks in that package\n2. add a GET /healthz endpoint to services/api (just returns {ok:true} + git sha)\n3. fix the dark mode toggle in apps/dashboard/src/Theme.tsx, issue #301 — it forgets the setting on reload\nthey don't touch each other. get them all done and merged, I'll check back after lunch",
+      "prompt": "three things for today in acme/web (pnpm monorepo, main is green):\n1. bump eslint to v9 in packages/lint-config and fix whatever breaks in that package\n2. add a GET /healthz endpoint to services/api (just returns {ok:true} + git sha)\n3. fix the dark mode toggle in apps/dashboard/src/Theme.tsx, issue #301 \u2014 it forgets the setting on reload\nthey don't touch each other. get them all done and merged, I'll check back after lunch",
       "expected_output": "Fans out the three independent tasks in parallel, one executor per task with its own worktree, branch and PR, with briefs that name owned paths; accepts each only on verified remote evidence.",
       "files": [],
       "expectations": [
@@ -299,6 +299,26 @@
         3
       ],
       "golden": "goldens/deploy-revision-mismatch.md"
+    },
+    {
+      "id": 17,
+      "name": "review-request-timing",
+      "prompt": "executor on acme/ledger#88 says: 'CI is green, marking ready and requesting review from dana, li and omar now so we can iterate with them.' two bot review threads on the PR are unanswered and the change has not been deployed to dev yet. CODEOWNERS for the changed paths (services/ledger/**) lists @acme/ledger-owners (li, priya, sam). git blame on the changed lines is mostly dana, then priya; dana is not in CODEOWNERS. omar is out of office this week. go ahead",
+      "expected_output": "Keeps the PR in draft and does not request reviewers yet: two bot threads are unanswered and the change is unverified in dev. Answers or fixes both threads, deploys to dev and verifies there, confirms CI is still green on the head, and only then marks it ready. Requests at least two reviewers who can approve services/ledger/** through CODEOWNERS, ranked by recent changes: priya and li (sam as a fallback). Dana may be added as an extra but cannot replace an approver; omar is out of office and not an owner. Posts one PR comment with the change, risk, evidence and focus. Nudges once after 24 hours without review, then once each working day, only while the PR is ready apart from approvals.",
+      "files": [],
+      "expectations": [
+        "The answer keeps the PR in draft and holds the review request until both bot threads are answered and the change is verified in dev with CI green.",
+        "The answer requests at least two reviewers, and every required reviewer can approve services/ledger/** through CODEOWNERS (priya and li, or sam).",
+        "The answer does not use dana or omar in place of an owner: dana is not in CODEOWNERS and omar is out of office.",
+        "The answer nudges only after 24 hours without review, then at most once each working day, and only while the PR is otherwise ready.",
+        "The answer posts one PR comment with the change, the risk, the evidence and what to review."
+      ],
+      "key_expectations": [
+        0,
+        1,
+        2
+      ],
+      "golden": "goldens/review-request-timing.md"
     }
   ]
 }
