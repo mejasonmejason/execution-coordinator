@@ -130,7 +130,14 @@ For web work, run real browser or Playwright journeys. Label mocks as mocks. A m
 
 **UI.** Write task scenarios from the diff. The executor's owner or an advisor reviews them; this adds no new user gate. Drive the real branch. If SSO is needed, set a `human-gate` naming who must sign in, and never expose credentials. Capture screenshots, console errors and failed requests. Screenshots alone do not prove success. Link the pass or fail evidence for each scenario. Turn reusable flows into tests. Test mobile widths for visual changes.
 
-**Test-plan council.** Before the first deploy of a live-behavior change to a shared environment (dev, staging, canary), write the test plan on the task: scenarios, data, the signals that mean pass or fail, and the rollback. Two fresh-context, read-only reviewers check it in parallel, because a plan reviewed after the deploy only explains the failure:
+**Test-plan council.** Before the first deploy of a live-behavior change to a shared environment (dev, staging, canary), read the service's AGENTS.md, README, runbooks, deploy config and existing integration tests to learn which environments it has and how it deploys. Search internal docs when they leave this unclear; never assume a staging environment exists. Then write the test plan on the task, tied to the PR head:
+
+- The changed behavior and its expected result, with success cases, failure cases and regression checks.
+- The environment, setup and data. Use real identifiers where the service needs them.
+- The exact requests, commands or journeys to run, and the response, log or metric that means pass or fail.
+- How to confirm the deployed revision, the cleanup of test data and config, and the rollback.
+
+Two fresh-context, read-only reviewers check it in parallel, because a plan reviewed after the deploy only explains the failure:
 
 - Behavior: do the scenarios cover every changed path in `base_sha..head`, the edge cases and real data, with a pass or fail signal for each?
 - Deploy and observability: are the rollout order, dependent services, metrics, logs and alerts to watch, smoke test and proven rollback named?
@@ -138,6 +145,8 @@ For web work, run real browser or Playwright journeys. Label mocks as mocks. A m
 Fix every gap they find before deploying, or record it as an owned task with the risk it leaves. This adds no user gate. Skip it for changes with no live behavior (docs, tests, refactors proven equal by tests).
 
 **Verify on the real environment.** Unit tests and green CI prove the code matches its tests, not that the change works where it runs. For every live-behavior change, climb this ladder as far as access allows: a local run against real dependencies, then dev, then staging, then read-only checks in production (a GET, a query, a dashboard, a log search). Never write to production to verify. Deploying to dev and staging is routine work, not a user gate, unless a repo or ledger rule says otherwise. Drive the changed path through its real entry point (an HTTP or GraphQL request, the browser journey, a call from a consumer service, a config read) and compare the result with the pass signal in the test plan.
+
+**Run the plan.** Before you credit any result to the change, confirm the environment runs the intended commit: the version endpoint, deploy record or image tag must match the head or merge commit. A green deploy job does not prove it, because another deploy can replace yours on a shared environment. Leave other people's deploys, data and config intact. Record the actual result against each pass signal, then remove the test data and config you created. After a fix, re-run the affected scenarios on the new head; re-run the council only when scope or risk changes. For a change with no deployable behavior, record why on the PR instead of a deploy result. Post the final plan, the tested commit and environment, the results and the evidence links on the PR.
 
 **Do not give up on verification.** A failed attempt is a problem to solve, not a result. Before you write "could not verify":
 
