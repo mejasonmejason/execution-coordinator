@@ -41,6 +41,7 @@ Run both against two versions (for example v10 and v11) and compare the results.
 | 12 | push-without-checks | Run the repo's CI-equivalent checks on the changed files before every push. "CI will catch it" is not a plan. |
 | 13 | second-coordinator | One coordinator per project. Find and message the live coordinator before you coordinate. Silence does not transfer ownership. |
 | 14 | test-plan-before-dev-deploy | Before the first shared-environment deploy of a live-behavior change, two fresh-context reviewers check the test plan: one for behavior, one for deploy and observability. |
+| 15 | verify-dont-give-up | A live change counts as verified only with evidence from a deployed environment; a 401 or a sign-in prompt gets a re-login, a second route and the next environment before it is reported as a gap. |
 
 Evals 10 to 13 come from issue #19. In v11 their rules moved from SKILL.md into `references/`, so they are the ones to run in `--load skill-only` mode.
 
@@ -101,7 +102,7 @@ How `skill-only` works:
 # Issue #19 reproduction: the 4 new evals, 3 runs each, for one SKILL.md (its references/ folder is picked up)
 python3 evals/run_behavior.py --skill /path/to/SKILL.md --load skill-only --runs 3 \
   --only twelve-similar-migrations,child-silent,push-without-checks,second-coordinator --out /tmp/so-new
-# All 14 evals once
+# All 15 evals once
 python3 evals/run_behavior.py --skill /path/to/SKILL.md --load skill-only --out /tmp/so-all
 # v10 had no references folder: extract it to its own folder first
 mkdir -p /tmp/v10 && git show 436714e:SKILL.md > /tmp/v10/SKILL.md
