@@ -1,6 +1,6 @@
 # Keep-alive, status and reports
 
-You must read this at the kickoff of any coordination and on every resume, as SKILL.md requires. Read it again before you set a status, write a `human-gate` or a decision issue, set up the L2 sweeper, install a hook, name sessions, write a status report, turn keep-alive off, or offboard a finished project.
+You must read this at the kickoff of any coordination and on every resume, as SKILL.md requires. Read it again before you set a status, date a milestone, write a `human-gate` or a decision issue, set up the L2 sweeper, install a hook, name sessions, write a status report, turn keep-alive off, or offboard a finished project.
 
 ## Contents
 
@@ -8,6 +8,7 @@ You must read this at the kickoff of any coordination and on every resume, as SK
 - Operating layers
 - Status commands
 - Rules for every agent
+- Time boxes
 - Decision issues
 - One coordinator per project
 - Enforcers
@@ -70,8 +71,20 @@ In a Claude Code cloud session, also mirror the status to the ledger and use the
 7. Before a scheduled gap or quiet hours, set `waiting` with a precise next action.
 8. A step that needs the human in a browser (a device or one-time code, SSO or MFA approval, an OAuth consent page, a page they must click) runs in the foreground of the session that needs it. Never hide it: no wrapper that answers prompts for them, no output sent only to a temp file. As soon as the code or URL appears, notify the human with the code, the URL and the reason, and make the notification open that session. Then stop, ask there, and set `human-gate`. Resume only after they answer or the step completes. If the code expires, rerun and ask again. Never relay a code through another session or a chat channel.
    Credentials are not a decision (see below): first run the tool's own non-interactive login and retry. Ask the human only when that login itself needs them.
+9. Never end a turn `waiting` or `human-gate` without a dated milestone that has not passed (see Time boxes).
 
 Observation-only sessions have no keep-alive.
+
+## Time boxes
+
+Every workstream has exactly one open milestone with a date at most 5 working days away. Split longer work into chained milestones and date only the next one. Record the milestone, its dates, its gates and every slip in the ledger, because the sweeper, the daily plan and the next session read them there.
+
+1. **Two dates per milestone.** Most execution finishes the same or the next working day; review and approval waits push work out. Give each milestone a build date (same or next working day) and a review date (build date plus the measured review wait). Measure the wait from history: review request to first approval on the repo's recent merged PRs, median and 80th percentile, per repo when it has 5 or more samples, otherwise per organization or overall. Use the 80th percentile and recheck it weekly. A guessed wait is not a plan.
+2. **Real start.** Date a new milestone from the work's real start (first task, first PR, first session), not from today. Work already past a reasonable date counts as slipped once, with the reason.
+3. **Gates.** Anything waiting on another person is a gate with that person named and a `since` date. A review gate starts at the review request, not at PR open. A green, verified PR with no reviewers requested is our slip, not the reviewer's.
+4. **Slip rule.** When the date passes undone, re-plan the same turn: a new date with a reason (one slip) or a smaller scope. Never move a passed date silently. A second slip on one milestone goes to the top of the user's next plan with a recommendation: drop, hand off or escalate.
+5. **Gate default.** A decision waiting on the user more than 2 working days proceeds on your recommended default unless the user objects, in non-production environments only. Never merge, deploy to or change production, send chat, write shared configuration or do anything irreversible on a default. Log each default with the gate, what you did, the environment and how to undo it, and show it in the user's next plan so they can reverse it.
+6. **Done.** Close a milestone only with evidence, then date the next one in the chain before the turn ends.
 
 ## Decision issues
 

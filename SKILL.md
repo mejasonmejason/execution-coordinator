@@ -61,7 +61,7 @@ At kickoff, read the repo rules (CLAUDE.md, AGENTS.md, a steward or babysit skil
 
 ## Completion fence and plan
 
-Write root-task criteria as observable results: code, tests, CI, threads, stack ancestry, merge, deployment, journeys, demos. Before dispatch, graph dependencies, parallel tasks and parent branches, and set milestone checks. Verify combined results and interfaces before dependent phases.
+Write root-task criteria as observable results: code, tests, CI, threads, stack ancestry, merge, deployment, journeys, demos. Before dispatch, graph dependencies, parallel tasks and parent branches, and time-box milestones (keepalive.md). Verify combined results and interfaces before dependent phases.
 
 Cite code claims as `path:line`. Reject or verify uncited claims before execution. Completion needs remote evidence, not local commits, tests or agent claims, because only remote state merges.
 
