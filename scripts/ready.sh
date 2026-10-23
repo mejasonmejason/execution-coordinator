@@ -5,9 +5,11 @@
 # Host comes from the URL, else $GH_HOST, else github.com.
 # BLOCK: not open or draft; head is not --sha; conflicts, behind, unknown or blocked mergeability; a required check
 #   failing, missing or pending (pending allowed with --allow-pending); a latest review requesting changes; owed
-#   replies or unsent drafts (scripts/pr-threads.sh); files outside the --paths globs (** any depth, * one segment).
+#   replies or unsent drafts (scripts/pr-threads.sh); files outside the --paths globs (** any depth, * one segment);
+#   no dev verification comment; a production-targeted change with no production run comment.
 # WARN: failing non-required checks; unreadable required-check list (then every check counts as required); deleted
-#   tests; changed CI, test or lint config; head not descending from --base-sha.
+#   tests; changed CI, test or lint config; head not descending from --base-sha; no staging verification comment;
+#   dev verification older than the head commit.
 # --key K reads pr, paths and base_sha from dispatch K in <git root>/.coordinator/status.json (scripts/status.sh)
 #   and records the verdict there with the key, PR, head, paths, --allow-pending and run_id it covered, which
 #   `status.sh dispatch K --state accepted` requires. It first records ok=false ("in progress") with a token for
@@ -178,6 +180,36 @@ if [ "$trc" -eq 0 ] || [ "$trc" -eq 1 ]; then
 else
   echo "B could not read owed replies (pr-threads.sh exit $trc); fail closed" >> "$tmp/v"
 fi
+
+# Environment evidence posted on the PR as a comment or review body by the viewer or the PR author: dev always,
+# staging when it exists (else a comment saying it is not available), and a production run before merge for a PR
+# whose change runs in production (prod test suites). Proof is a screenshot, a code block or a run link; prose alone
+# does not count. Evidence older than the head commit warns. Unreadable comments block.
+me=$(api user --jq .login 2>/dev/null) || me=""
+{ api "$R/issues/$num/comments?per_page=100" --paginate --jq '.[] | {login: .user.login, body: (.body // ""), at: .created_at, url: .html_url}' \
+  && api "$R/pulls/$num/reviews?per_page=100" --paginate --jq '.[] | {login: .user.login, body: (.body // ""), at: .submitted_at, url: .html_url}'; } > "$tmp/ev" 2> "$tmp/err" \
+  || echo "B could not read PR comments for environment evidence: $(head -c 200 "$tmp/err" | tr '\n' ' '); fail closed" >> "$tmp/v"
+hd=$(api "$R/commits/$head" --jq '.commit.committer.date' 2>/dev/null) || hd=""
+api "$R/pulls/$num/files?per_page=100" --paginate --jq '.[] | .filename' > "$tmp/evf" 2>/dev/null || : > "$tmp/evf"
+[ -s "$tmp/v" ] && grep -q "could not read PR comments" "$tmp/v" || jq -rs --arg me "$me" --arg author "$(jq -r '.user.login // ""' "$tmp/pr")" \
+    --arg hd "$hd" --arg title "$(jq -r '.title // ""' "$tmp/pr")" --rawfile files "$tmp/evf" --arg h9 "${head:0:9}" '
+  def word: test("verif|validat|\\btested\\b|test run|top ?hat|smoke|e2e|dry run|screenshot|output|\\bpass(ed)?\\b|succeeded"; "i");
+  def proof: test("!\\[|<img\\b|```|/actions/runs/|https?://\\S+/(runs?|builds?|jobs?)/|\\.(png|jpe?g|gif|mp4|mov)\\b"; "i");
+  def newest: sort_by(.at) | last;
+  [ .[] | select((.login == $me and $me != "") or (.login == $author and $author != "")) ] as $ours
+  | [ $ours[] | select(.body | word and proof) ] as $ev
+  | ([ $ev[] | select(.body | test("\\b(dev|development)\\b"; "i")) ] | newest) as $dev
+  | ([ $ev[] | select(.body | test("\\b(staging|stage|stg)\\b"; "i")) ] | newest) as $stg
+  | ([ $ev[] | select(.body | test("\\b(prod|production)\\b[^\\n]{0,60}\\b(run|runs|verif\\w*|validat\\w*|pass(ed)?|green|succeeded)\\b|\\b(run|ran|verif\\w*|validat\\w*|tested)\\b[^\\n]{0,40}\\b(in|on|against) (prod|production)\\b"; "i")) ] | newest) as $prod
+  | any($ours[]; .body | test("no staging|staging[^.\\n]{0,30}\\b(not available|unavailable|n/a|does not exist|not applicable)\\b"; "i")) as $nostg
+  | ($files | split("\n") | map(select(test("(^|[/_.-])(prod|production)([/_.-]|$)"; "i") and test("test|suite|e2e|spec|smoke|canary"; "i")))) as $pt
+  | ($pt | length > 0 or ($title | test("\\b(test|suite|e2e)s?\\b[^\\n]{0,40}\\b(in|to|against|for) prod(uction)?\\b"; "i"))) as $prodreq
+  | (if $dev == null then "B no dev verification posted on the PR: comment with a screenshot, run link or command output from dev"
+     elif $hd != "" and $dev.at < $hd then "W dev verification \($dev.url) predates head \($h9); re-verify or say why the new commits do not change behavior"
+     else empty end),
+    (if $stg == null and ($nostg | not) then "W no staging verification posted: post it, or a comment saying staging is not available" else empty end),
+    (if $prodreq and $prod == null then "B production-targeted change (\(if ($pt | length) > 0 then $pt[0:3] | join(", ") else "title" end)) has no production run posted; run it in production and post the output before merge" else empty end)
+' "$tmp/ev" >> "$tmp/v" || echo "B could not evaluate environment evidence; fail closed" >> "$tmp/v"
 
 # Scope and tamper flags from the PR file list.
 api "$R/pulls/$num/files?per_page=100" --paginate --jq '.[] | {filename, status}' > "$tmp/files" 2> "$tmp/err" \

@@ -119,7 +119,7 @@ Required human reviews, compliance or change-management checks and deploy approv
 - Generated files and formatting are committed, commits are signed if required, and the description matches scope and evidence.
 - Only human approval or a named external dependency remains.
 - The latest AI reviews cover the current head. Read each job's review-result block, because green may mean skipped (workflow change, fork, path filter) and an unstarted run has no check. Count expected non-required checks by name.
-- Live-behavior changes have PR evidence: a real-data dry run, eval or live probe, not unit tests alone.
+- Every PR, adopted and old ones included, has a PR comment with dev evidence (screenshot, run link or command output), staging evidence when staging exists, and for a change that runs in production (a prod test suite) a production run. Unit tests, CI or description text alone do not count.
 
 `scripts/ready.sh <pr-url> --sha <reported head>` exits 0 READY, 1 NOT READY (task every `BLOCK`) or 3 unreadable (never READY). A lone BLOCK for a missing required approval is a human gate, not a passing verdict: report it, do not task it. Apply the checklist too, because the script neither blocks AWAITING nor proves review coverage or behavior. Re-run the repo's merge gates. A push or rebase voids prior-head evidence.
 
