@@ -87,7 +87,7 @@ free -m; vmstat 1 2 | tail -1
 ps -axm -o pid,rss,etime,command | head -8   # macOS; on Linux: ps aux --sort=-rss | head -8
 ```
 
-The check fails if free memory is under 30%, swap is 80% or more used or grew, or one tool's process tree uses more than 6 GB. On a failure:
+The check fails if free memory is under 30%, swap is 80% or more used while free memory is under 50%, swap grew since the last check, or one tool's process tree uses more than 6 GB. macOS keeps swap high long after memory frees, so high swap with plenty of free memory is not a failure. On a failure:
 
 - Host new heavy work, and start no heavy local job, because the machine is already near its limit.
 - Kill only tools orphaned from live executors, because killing a live executor's tool loses its work.
