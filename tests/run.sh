@@ -71,7 +71,8 @@ H=abc1234567890abc1234567890abc1234567890a
 fixtures() {
   rm -f "$STUB_DIR"/*.json
   jq -n --arg h "$H" '{state:"open", draft:false, merged:false, mergeable:true, mergeable_state:"clean", title:"t",
-    html_url:"https://github.com/o/r/pull/7", head:{sha:$h}, base:{ref:"main"}}' > "$STUB_DIR/pr.json"
+    html_url:"https://github.com/o/r/pull/7", head:{sha:$h}, base:{ref:"main"}, user:{login:"me"}}' > "$STUB_DIR/pr.json"
+  echo '[{"user":{"login":"me"},"body":"Verification (dev and staging) at abc1234:\n```\nPASS 3 tests\n```","created_at":"2026-01-01T00:00:00Z","html_url":"u/c1"}]' > "$STUB_DIR/icomments.json"
   echo '{"contexts":["build"]}' > "$STUB_DIR/required.json"
   echo '[]' > "$STUB_DIR/rules.json"
   echo '{"check_runs":[{"name":"build","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z","html_url":"u1"},
@@ -150,6 +151,24 @@ fixtures
 out=$("$ready" "$U" --paths "$ALL"); rc=$?
 t "$rc" 0 "ready: clean PR is READY"
 has "$out" "READY $U @ abc123456" "ready: header line"
+# Environment evidence on the PR.
+ic() { printf '%s' "$1" > "$STUB_DIR/icomments.json"; }
+ic '[]'; out=$("$ready" "$U" --paths "$ALL"); t $? 1 "evidence: no comment is NOT READY"
+has "$out" "BLOCK no dev verification posted" "evidence: names the missing dev verification"
+has "$out" "WARN  no staging verification posted" "evidence: warns on missing staging"
+ic '[{"user":{"login":"me"},"body":"Verified on dev, looks good","created_at":"2026-01-01T00:00:00Z","html_url":"u"}]'
+"$ready" "$U" --paths "$ALL" >/dev/null; t $? 1 "evidence: a prose claim without proof does not count"
+ic '[{"user":{"login":"someone"},"body":"Verification (dev)\n![s](https://x/a.png)","created_at":"2026-01-01T00:00:00Z","html_url":"u"}]'
+"$ready" "$U" --paths "$ALL" >/dev/null; t $? 1 "evidence: another author's comment does not count"
+ic '[{"user":{"login":"me"},"body":"Verification (dev)\n![s](https://x/a.png)","created_at":"2026-01-01T00:00:00Z","html_url":"u"},{"user":{"login":"me"},"body":"No staging for this service.","created_at":"2026-01-01T00:00:00Z","html_url":"u2"}]'
+out=$("$ready" "$U" --paths "$ALL"); t $? 0 "evidence: dev screenshot plus staging not available is READY"
+hasnt "$out" "staging" "evidence: no staging warning once staging is declared unavailable"
+setj files.json '. + [{"filename":"e2e/production/suite.yaml","status":"added"}]'
+out=$("$ready" "$U" --paths "$ALL,e2e/**"); t $? 1 "evidence: a prod test suite without a production run is NOT READY"
+has "$out" "BLOCK production-targeted change (e2e/production/suite.yaml)" "evidence: names the prod-targeted file"
+ic '[{"user":{"login":"me"},"body":"Verification (dev, staging)\n```\nok\n```","created_at":"2026-01-01T00:00:00Z","html_url":"u"},{"user":{"login":"me"},"body":"Verification (prod): suite run passed in production https://ci.example/runs/9","created_at":"2026-01-01T00:00:00Z","html_url":"u3"}]'
+"$ready" "$U" --paths "$ALL,e2e/**" >/dev/null; t $? 0 "evidence: a posted production run clears the prod block"
+fixtures
 has "$out" "WARN  check failed: lint" "ready: non-required failure is a warning"
 has "$out" "WARN  tests deleted: tests/x.test.ts" "ready: deleted test flagged"
 has "$out" "WARN  CI/test/lint config changed: .github/workflows/ci.yml" "ready: CI config change flagged"
