@@ -8,6 +8,7 @@ You must read this before any dispatch (repeated units above all), before you re
 - Record a dispatch
 - Local or hosted
 - Memory check
+- Local test runs
 - Hosted briefs
 - Acceptance review in detail
 - Test integrity
@@ -72,9 +73,11 @@ Host the work when it needs any of these:
 
 Keep work local when it needs uncommitted state, local-only credentials or services, local browser journeys, or quick coordination actions. Record the placement on the task and the ledger.
 
+Skip a local re-run of tests that CI already runs on the pushed commit, or that an executor already ran and reported. Read the CI result instead. Re-run locally only a test that CI does not cover, or a failure you need to reproduce.
+
 ## Memory check
 
-Run this before heavy local work, and on each sweep while heavy local work runs.
+Run this before any local test run or build, whatever its size, and on each sweep while one runs. A narrow test pattern can still start one worker per core.
 
 ```bash
 # macOS
@@ -84,11 +87,17 @@ free -m; vmstat 1 2 | tail -1
 ps -axm -o pid,rss,etime,command | head -8   # macOS; on Linux: ps aux --sort=-rss | head -8
 ```
 
-The check fails if free memory is under 30%, swap grew, or one tool uses more than 6 GB. On a failure:
+The check fails if free memory is under 30%, swap is 80% or more used while free memory is under 50%, swap grew since the last check, or one tool's process tree uses more than 6 GB. macOS keeps swap high long after memory frees, so high swap with plenty of free memory is not a failure. On a failure:
 
 - Host new heavy work, and start no heavy local job, because the machine is already near its limit.
 - Kill only tools orphaned from live executors, because killing a live executor's tool loses its work.
 - Validate only the changed packages locally.
+
+## Local test runs
+
+- Cap workers and force an exit, for example `jest --maxWorkers=2 --forceExit`, and run under a timeout. Test runners can keep workers alive after the last result prints.
+- After reading the result, confirm the whole process tree exited (`pgrep -f <runner>`). Kill your own leftover tree. A parent that restarts workers needs the parent killed too.
+- A test tree older than 15 minutes whose result you already reported is orphaned: kill it.
 
 ## Hosted briefs
 
