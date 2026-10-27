@@ -18,6 +18,7 @@ You must read this before you run `scripts/ready.sh` or the merge gate, chase re
 
 - Trunk has required status checks and required reviews. CODEOWNERS routes reviews.
 - Use the merge queue when the repo has one. Otherwise use `gh pr merge --auto --squash` (or the repo's method) once merge authority is recorded.
+- Pass the checked head with every merge: `gh pr merge --match-head-commit <sha>`, or the `sha` field of the REST merge call. A direct merge then refuses a head nobody verified. Auto-merge and queues do not pin later pushes, so hold pushes until the merge lands.
 - On a stack, auto-merge and fix bots run only on the bottom PR. Restacks and merges stay with the stack owner.
 
 ## What `scripts/ready.sh` checks
@@ -55,9 +56,9 @@ On a stack, prepare PRs for review bottom-up. Mark a PR ready or request its rev
 
 1. **Pick at least two reviewers, always,** even when the repo needs one approval, because one reviewer is a single point of delay. Each must be able to approve the changed paths: a CODEOWNERS entry for those paths (a team entry covers its members) or the repo's required-review rule. Rank the eligible people by who last changed or reviewed those files (`git log` and `git blame` on the changed lines, recent reviews on PRs that touched them). Skip anyone out of office. A top author who cannot approve those paths may be added as an extra, never in place of an approver, because their approval does not satisfy the gate. If only one person can approve, request them and record that.
 2. **Ask once, clearly.** With the request, post one PR comment that mentions the reviewers and gives the change, the risk, the evidence and what to look at.
-3. **Nudge on a schedule.** No review 24 hours after the request: nudge once, saying what changed since. After that, nudge once each working day. Send a nudge only while the PR is READY apart from approvals on its current head; otherwise fix that first.
+3. **Nudge on a schedule.** No review 24 hours after the request: nudge once, saying what changed since. After that, nudge once each working day. Send a nudge only while the PR is READY apart from approvals on its current head; otherwise fix that first. Mention only the reviewers whose approval the current head still needs, because re-pinging someone who already approved teaches them to ignore the next ping.
 4. PR review requests and PR comments are part of driving the PR. Chat messages to reviewers follow the user's chat rule.
-5. Record each request and nudge on the task.
+5. Record each request on the task with why each reviewer was picked (the CODEOWNERS entry, the commits or reviews on those paths), and record each nudge.
 
 If a reviewer is overdue, overloaded or out of office, ask another eligible approver. Assign other ready work during review waits, so executors do not idle.
 
@@ -84,6 +85,7 @@ When batch checks fail, isolate the culprit by queue bisection or subset runs. R
 
 ## Post-merge and queue checks
 
+- A queued merge or enabled auto-merge is not a merge. Report a PR merged, run the post-merge checks and retire its executor only after the PR shows merged with a merge commit.
 - Before you touch the next PR, confirm the merged commits are on trunk. Before the next merge into a base, confirm the merge commit is there and the base CI is green. Red or unknown base CI stops all merges and becomes the top task, because every later merge would build on a broken base.
 - Regularly reconcile actual merges against the recorded READY verdicts and overrides. A merge of ours with no passing READY at its merged head and no logged override is an anomaly; record it as a lesson.
 - Before acting on a queue dequeue or failure event, compare the event's SHA with the current PR head, because the event may describe an older head.
